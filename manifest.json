@@ -1,0 +1,23 @@
+{
+    "name": "Email Summarizer",
+    "description": "Summarizes your Gmail emails using AI.",
+    "version": "1.0",
+    "manifest_version": 3,
+    "permissions": ["identity", "storage"],
+    "host_permissions": ["https://www.googleapis.com/"],
+    "oauth2": {
+      "client_id": "136268002143-9r3bpgigmg1o9g5o502f8u2omqhesfdh.apps.googleusercontent.com.apps.googleusercontent.com",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/userinfo.email"
+      ]
+    },
+    "background": {
+      "service_worker": "background.js"
+    },
+    "action": {
+      "default_popup": "popup.html",
+      "default_icon": "logo.png"
+    }
+  }
+  

@@ -1,0 +1,72 @@
+/* General Styling */
+body {
+    width: 350px;
+    background: #1e1e2f;
+    color: white;
+    font-family: 'Arial', sans-serif;
+    padding: 15px;
+    text-align: center;
+}
+
+/* Container */
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Header */
+h2 {
+    font-size: 20px;
+    color: #f9a826;
+    margin-bottom: 10px;
+}
+
+/* Chatbox */
+#chatbox {
+    width: 90%;
+    height: 250px;
+    overflow-y: auto;
+    background: #2a2a3a;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #444;
+}
+
+/* Messages */
+.message {
+    padding: 10px;
+    border-radius: 8px;
+    margin: 5px 0;
+    max-width: 80%;
+}
+
+/* Bot Messages */
+.bot {
+    background: #3b3b4f;
+    text-align: left;
+}
+
+/* User Messages */
+.user {
+    background: #f9a826;
+    text-align: right;
+    margin-left: auto;
+}
+
+/* Button */
+button {
+    background: #f9a826;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+button:hover {
+    background: #e6951d;
+}

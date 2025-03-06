@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>EMA - Email Summarizer</title>
+    <script src="popup.js" defer></script>
+    <style>
+        body {
+            width: 350px;
+            height: 500px;
+            font-family: Arial, sans-serif;
+            background-color: #2a2a72;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            color: white;
+        }
+
+        h3 {
+            color: #d6b3ff;
+            margin-bottom: 10px;
+        }
+
+        .chatbox {
+            width: 100%;
+            height: 80%;
+            overflow-y: auto;
+            background: #3a3a91;
+            border-radius: 10px;
+            padding: 10px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.ai {
+            justify-content: flex-start;
+        }
+
+        .message .bubble {
+            max-width: 70%;
+            padding: 10px;
+            border-radius: 15px;
+            font-size: 14px;
+            word-wrap: break-word;
+        }
+
+        .message.user .bubble {
+            background: #8c52ff;
+            color: white;
+        }
+
+        .message.ai .bubble {
+            background: #b185db;
+            color: black;
+        }
+
+        .message.error .bubble {
+            background: #ff5f5f;
+            color: white;
+        }
+
+        .button-container {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        button {
+            background: #a463f2;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        button:hover {
+            background: #8138d0;
+        }
+    </style>
+</head>
+<body>
+    <h3>💜 EMA - Your Email Summarizer</h3>
+    <div class="chatbox" id="chatbox">
+        <div class="message ai">
+            <div class="bubble">Hello! I am **EMA**, your email assistant. Click "Summarize Emails" to get started.</div>
+        </div>
+    </div>
+    <div class="button-container">
+        <button id="fetch">📩 Summarize Emails</button>
+    </div>
+</body>
+</html>
