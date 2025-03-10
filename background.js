@@ -14,8 +14,7 @@ function authenticateUser(callback) {
 
 // Fetch a list of email message IDs (single batch)
 function fetchEmails(token) {
-  // Adjust maxResults as needed (here set to 50)
-  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=50", {
+  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -24,19 +23,27 @@ function fetchEmails(token) {
   })
     .then(response => response.json())
     .then(data => {
-      if (data.messages) {
-        console.log("Emails fetched:", data.messages);
-        return data.messages; // Return array of message objects
-      } else {
-        console.warn("No emails found.");
+      console.log("Raw API Response:", JSON.stringify(data, null, 2));
+
+      if (data.error) {
+        console.error("❌ Gmail API Error:", data.error.message);
         return [];
       }
+
+      if (!data.messages || data.messages.length === 0) {
+        console.warn("⚠️ No emails found.");
+        return [];
+      }
+
+      console.log("✅ Emails fetched:", data.messages);
+      return data.messages;
     })
     .catch(error => {
-      console.error("Error fetching emails:", error);
+      console.error("❌ Error fetching emails:", error);
       return [];
     });
 }
+
 
 // Fetch full email content for a given message ID
 function fetchEmailContent(token, messageId) {
@@ -74,7 +81,7 @@ function summarizeEmails(emails) {
     headers: {
       "Content-Type": "application/json",
       // WARNING: For security, do not expose your API key in client-side code.
-      "Authorization": `Bearer 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`
+      "Authorization": `Bearer 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`
     },
     body: JSON.stringify({
       model: "gpt-3.5-turbo",
