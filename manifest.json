@@ -1,12 +1,16 @@
 {
-    "name": "Email Summarizer",
-    "description": "Summarizes your Gmail emails using AI.",
+    "name": "EMA (Enhanced Mail Assistant)",
+    "description": "AI-powered email assistant",
     "version": "1.0",
     "manifest_version": 3,
     "permissions": ["identity", "identity.email", "storage"],
-    "host_permissions": ["https://www.googleapis.com/"],
+    "host_permissions": [
+      "https://www.googleapis.com/",
+      "https://api.openai.com/"
+    ],
+
     "oauth2": {
-      "client_id": "136268002143-9r3bpgigmg1o9g5o502f8u2omqhesfdh.apps.googleusercontent.com",
+      "client_id": "327765316506-4spv456cip27evtvel6ad38m23l2p3gc.apps.googleusercontent.com",
       "scopes": [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -19,7 +23,17 @@
     },
     "action": {
       "default_popup": "popup.html",
-      "default_icon": "logo.png"
+      "default_icon": {
+        "16": "logo.png",
+        "32": "logo.png",
+        "48": "logo.png",
+        "128": "logo.png"
+      }
+    },
+    "icons": {
+      "16": "logo.png",
+      "32": "logo.png",
+      "48": "logo.png",
+      "128": "logo.png"
     }
-  }
-  
+}
