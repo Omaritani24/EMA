@@ -1,12 +1,13 @@
 {
-    "name": "EMA (Enhanced Mail Assistant)",
+    "name": "EMA - Enhanced Mail Assistant",
     "description": "AI-powered email assistant",
     "version": "1.0",
     "manifest_version": 3,
     "permissions": ["identity", "identity.email", "storage"],
     "host_permissions": [
       "https://www.googleapis.com/",
-      "https://api.openai.com/"
+      "https://api.openai.com/",
+      "https://generativelanguage.googleapis.com/"
     ],
 
     "oauth2": {
@@ -14,7 +15,8 @@
       "scopes": [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/gmail.metadata"
+    "https://www.googleapis.com/auth/calendar.readonly"
+
      ]
 
     },

@@ -14,7 +14,7 @@ function authenticateUser(callback) {
 
 // Fetch a list of email message IDs (single batch)
 function fetchEmails(token) {
-  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages", {
+  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=3", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -68,42 +68,54 @@ function fetchEmailContent(token, messageId) {
     });
 }
 
-// Send email content to ChatGPT API to summarize them
-function summarizeEmails(emails) {
-  // Combine key parts of each email into a single prompt.
-  // Here we use the 'snippet' field, but you can include more details if needed.
+async function summarizeEmails(emails) {
+  // Replace with your actual Gemini API key (keep it secret!)
+  const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+
+  if (!emails || emails.length === 0) {
+    console.warn("⚠️ No emails provided for summarization.");
+    return "No summary available.";
+  }
+
+  // Clean and join email snippets into a single prompt
   const emailContent = emails.map(email => email.snippet).join("\n\n");
 
-  const prompt = `Please provide a concise summary of the following emails:\n\n${emailContent}`;
+  const prompt = `Please summarize the following emails, highlighting key points and grouping similar topics:\n\n${emailContent}`;
 
-  return fetch("https://api.openai.com/v1/chat/completions", {
+  console.log("📝 Constructed prompt for Gemini:\n", prompt);
+
+  // Gemini API URL (v1 is the latest stable version)
+  const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+
+  const requestBody = {
+    contents: [{ parts: [{ text: prompt }] }]
+  };
+
+  const options = {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // WARNING: For security, do not expose your API key in client-side code.
-      "Authorization": `Bearer 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`
-    },
-    body: JSON.stringify({
-      model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are an assistant that summarizes email content." },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 150
-    })
-  })
-    .then(response => response.json())
-    .then(data => {
-      console.log("ChatGPT API response:", data);
-      const summary = data.choices[0].message.content;
-      console.log("Summary:", summary);
-      return summary;
-    })
-    .catch(error => {
-      console.error("Error summarizing emails:", error);
-      return null;
-    });
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestBody)
+  };
+
+  console.log("🚀 Sending request to Gemini API...");
+
+  try {
+    const response = await fetch(url, options);
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      console.error("❌ Error summarizing with Gemini:", data?.error?.message || "Unknown error");
+      return "No summary available.";
+    }
+
+    // Extracting summary from Gemini response
+    const summary = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    console.log("✅ Summary received:", summary);
+    return summary || "No summary generated.";
+  } catch (err) {
+    console.error("❌ Network/Fetch error:", err);
+    return "No summary available.";
+  }
 }
 
 // Main function to fetch emails, process their content, and summarize them
