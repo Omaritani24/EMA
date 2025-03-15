@@ -1,107 +1,239 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>EMA - Email Summarizer</title>
-    <script src="popup.js" defer></script>
-    <style>
-        body {
-            width: 350px;
-            height: 500px;
-            font-family: Arial, sans-serif;
-            background-color: #2a2a72;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 10px;
-            color: white;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Your Daily Summary</title>
+  <style>
+    /* Global Reset/Defaults */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: "Arial", sans-serif;
+    }
 
-        h3 {
-            color: #d6b3ff;
-            margin-bottom: 10px;
-        }
+    body {
+      height: 600px;
+      width:400px;
+      background: linear-gradient(135deg, #d2cce9, #d4dfcc, #e5f2f3, #f6d7d2);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: #333;
+    }
 
-        .chatbox {
-            width: 100%;
-            height: 80%;
-            overflow-y: auto;
-            background: #3a3a91;
-            border-radius: 10px;
-            padding: 10px;
-            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
-            display: flex;
-            flex-direction: column;
-        }
+    /* Main container for all content */
+    .container {
+      width: 90%;
+      max-width: 500px;
+      margin: 30px auto;
+      background-color: rgba(255, 255, 255, 0.7);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      position: relative;
+    }
 
-        .message {
-            display: flex;
-            align-items: center;
-            margin-bottom: 10px;
-        }
+    /* Header section */
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
 
-        .message.user {
-            justify-content: flex-end;
-        }
+    .header h1 {
+      font-size: 1.6rem;
+      margin-bottom: 8px;
+      color: #333;
+    }
 
-        .message.ai {
-            justify-content: flex-start;
-        }
+    .header p {
+      font-size: 1rem;
+      color: #555;
+    }
 
-        .message .bubble {
-            max-width: 70%;
-            padding: 10px;
-            border-radius: 15px;
-            font-size: 14px;
-            word-wrap: break-word;
-        }
+    /* Summary items */
+    .summary-list {
+      list-style: none;
+      margin-top: 20px;
+    }
 
-        .message.user .bubble {
-            background: #8c52ff;
-            color: white;
-        }
+    .summary-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
 
-        .message.ai .bubble {
-            background: #b185db;
-            color: black;
-        }
+    .summary-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
 
-        .message.error .bubble {
-            background: #ff5f5f;
-            color: white;
-        }
+    .circle {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
 
-        .button-container {
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            margin-top: 10px;
-        }
+    /* Customize circle colors */
+    .circle-pink {
+      background-color: #e57373; /* Pink-ish */
+    }
+    .circle-purple {
+      background-color: #9575cd; /* Purple */
+    }
+    .circle-green {
+      background-color: #66bb6a; /* Green */
+    }
+    .circle-blue {
+      background-color: #4fc3f7; /* Blue or Gray */
+    }
 
-        button {
-            background: #a463f2;
-            color: white;
-            border: none;
-            padding: 12px;
-            font-size: 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: 0.3s;
-        }
+    .summary-label {
+      font-size: 1rem;
+      color: #333;
+    }
 
-        button:hover {
-            background: #8138d0;
-        }
-    </style>
+    .view-link, .view-all {
+      font-size: 0.9rem;
+      color: #666;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    /* Possible calendar events section */
+    .events-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 30px;
+      margin-bottom: 10px;
+    }
+
+    .events-header h2 {
+      font-size: 1rem;
+      color: #333;
+    }
+
+    .event-list {
+      margin-left: 10px;
+    }
+
+    .event-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .event-description {
+      font-size: 0.9rem;
+      color: #333;
+    }
+
+    .add-link {
+      font-size: 0.9rem;
+      color: #007bff;
+      cursor: pointer;
+      text-decoration: underline;
+      margin-left: 10px;
+    }
+
+    /* Chatbox at the bottom */
+    .chatbox {
+      margin-top: 30px;
+      position: bottom;
+    }
+
+    .chatbox-label {
+      font-weight: bold;
+      margin-bottom: 6px;
+      color: #333;
+    }
+
+    .chat-input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+
+    /* "EMA" branding (optional) */
+    .branding {
+      position: absolute;
+      bottom: -40px;
+      right: 20px;
+      font-weight: bold;
+      font-size: 1rem;
+      color: #666;
+      opacity: 0.5;
+    }
+  </style>
 </head>
 <body>
-    <h3>💜 EMA - Your Email Summarizer</h3>
-    <div class="chatbox" id="chatbox">
-        <div class="message ai">
-            <div class="bubble">Hello! I am **EMA**, your email assistant. Click "Summarize Emails" to get started.</div>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>Your Daily Summary</h1>
+      <p>Today you received</p>
+    </div>
+
+    <!-- Summary List -->
+    <ul class="summary-list">
+      <li class="summary-item">
+        <div class="summary-left">
+          <div class="circle circle-pink">3</div>
+          <span class="summary-label">From friends and family</span>
         </div>
+        <span class="view-link">view</span>
+      </li>
+      <li class="summary-item">
+        <div class="summary-left">
+          <div class="circle circle-purple">5</div>
+          <span class="summary-label">From your students</span>
+        </div>
+        <span class="view-link">view</span>
+      </li>
+      <li class="summary-item">
+        <div class="summary-left">
+          <div class="circle circle-green">9</div>
+          <span class="summary-label">Promotions</span>
+        </div>
+        <span class="view-link">view</span>
+      </li>
+    </ul>
+
+    <!-- Possible calendar events -->
+    <div class="events-header">
+      <h2>Possible calendar events</h2>
+      <span class="view-all">view all</span>
     </div>
-    <div class="button-container">
-        <button id="fetch">📩 Summarize Emails</button>
+    <div class="summary-item">
+      <div class="summary-left event-description">
+        Dinner at Ahmad’s: 4/3/2025 7:00
+      </div>
+      <span class="add-link">Add</span>
     </div>
+
+    <!-- Chatbox at the bottom -->
+    <div class="chatbox">
+      <label class="chatbox-label" for="chat-input">EMA</label>
+      <input
+        id="chat-input"
+        class="chat-input"
+        type="text"
+        placeholder="Hello Mohamad, what can I help you with today?"
+      />
+
+    </div>
+  </div>
 </body>
 </html>

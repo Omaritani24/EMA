@@ -37,3 +37,50 @@ document.getElementById("fetch").addEventListener("click", async function () {
 async function summarizeEmail(content) {
     return `Summary: ${content.substring(0, 50)}...`; // Fake summary
 }
+
+
+document.addEventListener("DOMContentLoaded", () => {
+    const chatbox = document.getElementById("chatbox");
+    const messageInput = document.getElementById("messageInput");
+    const sendBtn = document.getElementById("sendBtn");
+  
+    // Load chat history from storage
+    chrome.storage.local.get("chatHistory", (data) => {
+      if (data.chatHistory) {
+        chatbox.innerHTML = data.chatHistory;
+      }
+    });
+  
+    // Function to send message
+    function sendMessage() {
+      const message = messageInput.value.trim();
+      if (message === "") return;
+  
+      // Create user message element
+      const userMessage = `<div class="message user">${message}</div>`;
+      chatbox.innerHTML += userMessage;
+  
+      // Auto-reply (Fake AI response for now)
+      setTimeout(() => {
+        const botMessage = `<div class="message bot">I received: "${message}"</div>`;
+        chatbox.innerHTML += botMessage;
+        chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to bottom
+  
+        // Save messages to Chrome storage
+        chrome.storage.local.set({ chatHistory: chatbox.innerHTML });
+      }, 1000);
+  
+      messageInput.value = "";
+      chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to bottom
+  
+      // Save messages to Chrome storage
+      chrome.storage.local.set({ chatHistory: chatbox.innerHTML });
+    }
+  
+    // Event listeners
+    sendBtn.addEventListener("click", sendMessage);
+    messageInput.addEventListener("keypress", (event) => {
+      if (event.key === "Enter") sendMessage();
+    });
+  });
+  

@@ -14,7 +14,7 @@ function authenticateUser(callback) {
 
 // Fetch a list of email message IDs (single batch)
 function fetchEmails(token) {
-  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=3", {
+  return fetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -80,7 +80,7 @@ async function summarizeEmails(emails) {
   // Clean and join email snippets into a single prompt
   const emailContent = emails.map(email => email.snippet).join("\n\n");
 
-  const prompt = `Please summarize the following emails, highlighting key points and grouping similar topics:\n\n${emailContent}`;
+  const prompt = `Please summarize the following emails, highlighting key points in a brief paragraph\n\n${emailContent}`;
 
   console.log("📝 Constructed prompt for Gemini:\n", prompt);
 
