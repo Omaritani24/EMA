@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self'">
   <title>Your Daily Summary</title>
   <style>
     /* Global Reset/Defaults */
@@ -238,15 +239,7 @@
     <div id="summaryContainer"></div>
   </div>
 
-  <script>
-    // Example function to display the summary
-    function displaySummary(summaryText) {
-      const summaryContainer = document.getElementById('summaryContainer');
-      summaryContainer.textContent = summaryText; // Update the container with the summary
-    }
-
-    // Call this function with the summarized text
-    displaySummary("Your summarized text goes here.");
-  </script>
+  <!-- Link to external JavaScript file instead of inline script -->
+  <script src="popup.js"></script>
 </body>
 </html>

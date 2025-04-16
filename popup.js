@@ -38,6 +38,11 @@ async function summarizeEmail(content) {
     return `Summary: ${content.substring(0, 50)}...`; // Fake summary
 }
 
+// Example function to display the summary
+function displaySummary(summaryText) {
+    const summaryContainer = document.getElementById("summaryContainer");
+    summaryContainer.textContent = summaryText; // Update the container with the summary
+}
 
 document.addEventListener("DOMContentLoaded", () => {
     const chatbox = document.getElementById("chatbox");
