@@ -4,11 +4,14 @@
     "description": "AI-powered email assistant",
     "version": "1.0",
     "manifest_version": 3,
-    "permissions": ["identity", "identity.email", "storage"],
+    "permissions": [
+        "identity",
+        "identity.email",
+        "storage"
+    ],
     "host_permissions": [
-      "https://www.googleapis.com/",
-      "https://api.openai.com/",
-      "https://generativelanguage.googleapis.com/"
+        "https://www.googleapis.com/",
+        "https://generativelanguage.googleapis.com/"
     ],
 
     "oauth2": {

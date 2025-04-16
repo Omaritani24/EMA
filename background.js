@@ -166,3 +166,46 @@ function getSummary() {
 
 // Call this function when you want to retrieve the summary
 getSummary();
+
+// Add this to your existing background.js
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "getEmails") {
+        // Return emails from storage
+        chrome.storage.local.get(['emails'], function(result) {
+            sendResponse({emails: result.emails || []});
+        });
+        return true; // Required for async response
+    }
+    
+    if (request.action === "processMessage") {
+        chrome.storage.local.get(['emails'], async function(result) {
+            const emails = result.emails || [];
+            
+            // Create a more conversational prompt
+            const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
+            You have access to the user's recent emails and can help answer questions about them.
+            
+            Context (Recent Emails):
+            ${emails.map(email => `Email: ${email.snippet}`).join('\n')}
+
+            Instructions:
+            - Be conversational and friendly
+            - Only provide information that's relevant to the user's question
+            - If asked about emails you don't have access to, let the user know
+            - Keep responses concise but informative
+            - Don't automatically summarize unless specifically asked
+
+            User's message: ${request.message}
+
+            Please respond naturally to the user's message.`;
+
+            try {
+                const response = await summarizeEmails([{snippet: prompt}]);
+                sendResponse({reply: response});
+            } catch (error) {
+                sendResponse({reply: "I'm having trouble processing your request right now. Could you try again?"});
+            }
+        });
+        return true;
+    }
+});

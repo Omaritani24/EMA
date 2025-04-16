@@ -1,41 +1,75 @@
-document.getElementById("fetch").addEventListener("click", async function () {
-    let chatbox = document.getElementById("chatbox");
-    
-    // Show loading message
-    let loadingMessage = document.createElement("div");
-    loadingMessage.className = "message bot";
-    loadingMessage.textContent = "⏳ Fetching emails...";
-    chatbox.appendChild(loadingMessage);
+// When popup opens, request emails from background script
+document.addEventListener('DOMContentLoaded', function() {
+    const chatInput = document.getElementById('chat-input');
+    const chatbox = document.querySelector('.chatbox');
 
-    chrome.storage.local.get("emails", async function (data) {
-        chatbox.innerHTML = ""; // Clear chatbox before showing results
+    // Add initial greeting
+    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
 
-        if (data.emails && data.emails.length > 0) {
-            for (const email of data.emails) {
-                let summary = await summarizeEmail(email.snippet);
-
-                let userMessage = document.createElement("div");
-                userMessage.className = "message user";
-                userMessage.textContent = "Summarize this email:";
-                chatbox.appendChild(userMessage);
-
-                let botMessage = document.createElement("div");
-                botMessage.className = "message bot";
-                botMessage.textContent = summary;
-                chatbox.appendChild(botMessage);
+    // Set up chat input listener
+    chatInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            const message = chatInput.value.trim();
+            if (message) {
+                // Add user message to chat
+                addMessageToChat(message, 'user');
+                
+                // Clear input
+                chatInput.value = '';
+                
+                // Send to background script for processing
+                chrome.runtime.sendMessage(
+                    {action: "processMessage", message: message},
+                    function(response) {
+                        if (response && response.reply) {
+                            addMessageToChat(response.reply, 'bot');
+                        }
+                    }
+                );
             }
-        } else {
-            let noEmailsMessage = document.createElement("div");
-            noEmailsMessage.className = "message bot";
-            noEmailsMessage.textContent = "No emails found for today.";
-            chatbox.appendChild(noEmailsMessage);
+        }
+    });
+
+    // Request initial emails from background script
+    chrome.runtime.sendMessage({action: "getEmails"}, function(response) {
+        if (response && response.emails) {
+            updateEmailCounts(response.emails);
         }
     });
 });
 
-// Simulating an AI summary function (Replace this with OpenAI API)
-async function summarizeEmail(content) {
-    return `Summary: ${content.substring(0, 50)}...`; // Fake summary
+function addMessageToChat(text, sender) {
+    const chatbox = document.querySelector('.chatbox');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}`;
+    messageDiv.textContent = text;
+    chatbox.appendChild(messageDiv);
+    
+    // Scroll to bottom
+    chatbox.scrollTop = chatbox.scrollHeight;
+}
+
+function updateEmailCounts(emails) {
+    // Update the circle counts based on email categories
+    let personalCount = 0;
+    let workCount = 0;
+    let promoCount = 0;
+
+    emails.forEach(email => {
+        // Simple categorization based on email content/labels
+        if (email.labelIds && email.labelIds.includes('CATEGORY_PERSONAL')) {
+            personalCount++;
+        } else if (email.labelIds && email.labelIds.includes('CATEGORY_PROMOTIONS')) {
+            promoCount++;
+        } else {
+            workCount++;
+        }
+    });
+
+    // Update the UI circles
+    document.querySelector('.circle-pink').textContent = personalCount;
+    document.querySelector('.circle-purple').textContent = workCount;
+    document.querySelector('.circle-green').textContent = promoCount;
 }
 
 // Example function to display the summary
