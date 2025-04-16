@@ -218,7 +218,7 @@
     </div>
     <div class="summary-item">
       <div class="summary-left event-description">
-        Dinner at Ahmad’s: 4/3/2025 7:00
+        Dinner at Ahmad's: 4/3/2025 7:00
       </div>
       <span class="add-link">Add</span>
     </div>
@@ -232,8 +232,21 @@
         type="text"
         placeholder="Hello Mohamad, what can I help you with today?"
       />
-
     </div>
+
+    <!-- Add this in your popup.html where you want the summary to appear -->
+    <div id="summaryContainer"></div>
   </div>
+
+  <script>
+    // Example function to display the summary
+    function displaySummary(summaryText) {
+      const summaryContainer = document.getElementById('summaryContainer');
+      summaryContainer.textContent = summaryText; // Update the container with the summary
+    }
+
+    // Call this function with the summarized text
+    displaySummary("Your summarized text goes here.");
+  </script>
 </body>
 </html>

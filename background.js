@@ -153,3 +153,16 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   authenticateUser(processEmailsAndSummarize);
 });
+
+// Example function to get the summary from Chrome Storage
+function getSummary() {
+    chrome.storage.local.get(['summary'], function(result) {
+        if (result.summary) {
+            // Send the summary to the popup
+            chrome.runtime.sendMessage({ summary: result.summary });
+        }
+    });
+}
+
+// Call this function when you want to retrieve the summary
+getSummary();
