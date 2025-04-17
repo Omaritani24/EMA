@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshEvents = document.getElementById('refresh-events');
 
     // Add initial greeting
-    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
+    addMessageToChat("Hi! I'm EMA, your email assistant. How can I help? 👋", 'bot');
 
     // Function to handle sending messages
     function sendMessage() {
@@ -24,13 +24,20 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Send to background script for processing
             chrome.runtime.sendMessage(
-                {action: "processMessage", message: message},
+                { action: "processMessage", message: message },
                 function(response) {
+                    if (chrome.runtime.lastError) {
+                        console.error("❌ Could not connect to background:", chrome.runtime.lastError.message);
+                        addMessageToChat("⚠️ EMA is sleeping. Please reopen the extension and try again.", "bot");
+                        return;
+                    }
+            
                     if (response && response.reply) {
                         addMessageToChat(response.reply, 'bot');
                     }
                 }
             );
+            
         }
     }
 
@@ -56,7 +63,6 @@ document.addEventListener('DOMContentLoaded', function() {
             {action: "getEmails", filter: filterValue},
             function(response) {
                 if (response && response.emails) {
-                    updateEmailCounts(response.emails);
                     generateEmailSummary(response.emails);
                     
                     // Process calendar events
@@ -432,7 +438,7 @@ function displaySummary(summaryText) {
 
 document.addEventListener("DOMContentLoaded", () => {
     const chatbox = document.getElementById("chatbox");
-    const messageInput = document.getElementById("messageInput");
+    const messageInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("sendBtn");
   
     // Load chat history from storage
@@ -469,9 +475,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   
     // Event listeners
-    sendBtn.addEventListener("click", sendMessage);
-    messageInput.addEventListener("keypress", (event) => {
-      if (event.key === "Enter") sendMessage();
-    });
-  });
-  
+    if (sendBtn) {
+        sendBtn.addEventListener("click", sendMessage);
+    }
+    if (messageInput) {
+        messageInput.addEventListener("keypress", (event) => {
+            if (event.key === "Enter") sendMessage();
+        });
+    }
+});
+setInterval(() => {
+    console.log("🟢 Keeping background alive...");
+  }, 15000);
+   
