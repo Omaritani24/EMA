@@ -56,7 +56,6 @@ document.addEventListener('DOMContentLoaded', function() {
             {action: "getEmails", filter: filterValue},
             function(response) {
                 if (response && response.emails) {
-                    updateEmailCounts(response.emails);
                     generateEmailSummary(response.emails);
                     
                     // Process calendar events

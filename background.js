@@ -1024,7 +1024,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
             Important language rules:
             - If the user writes in English (like "what's new?" or "show my emails"), respond in English
-            - If the user writes in Arabizi/Franco-Arab (like "kifak" "shu fi" "3am befham" "ma3ak"), respond in Arabic text
+            - If the user writes in Arabizi/Franco-Arab (like "kifak" "shu fi" "3am befham" "ma3ak"), respond in Arabizi/Franco-Arab text
             - Keep responses friendly and natural in the appropriate language
             - Keep all email analysis functionality working as normal
             
