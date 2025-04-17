@@ -1055,8 +1055,72 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.storage.local.get(['pendingEmail'], resolve);
       });
         const contacts = await new Promise(resolve => {
-        chrome.storage.local.get(['knownContacts'], result => {
+        chrome.storage.local.get(['knownContacts'], async result => {
           resolve(result.knownContacts || []);
+           // Create a conversational prompt that handles English and Arabizi
+           const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
+           You can understand both English and Arabic written in English letters (Arabizi/Franco-Arab).
+
+           Important language rules:
+           - If the user writes in English (like "what's new?" or "show my emails"), respond in English
+           - If the user writes in Arabizi/Franco-Arab (like "kifak" "shu fi" "3am befham" "ma3ak"), respond in Arabizi/Franco-Arab text
+           - Keep responses friendly and natural in the appropriate language
+           - Keep all email analysis functionality working as normal
+           
+           Context (Recent Emails):
+           ${emails.map(email => `Email: ${email.snippet}`).join('\n')}
+           
+           User message: ${request.message}`;
+           
+           // First check cache before calling API
+           const cacheKey = `chat_${generateEmailContentHash([{snippet: request.message}])}`;
+           const cachedResponse = await getCachedItem(cacheKey);
+           
+           if (cachedResponse) {
+               console.log("🎯 Using cached chat response");
+               sendResponse({reply: cachedResponse});
+               return;
+           }
+           
+           // No cache hit, call Gemini API
+           const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+           const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+           
+           const requestBody = {
+               contents: [{ parts: [{ text: prompt }] }],
+               generationConfig: {
+                   temperature: 0.7,
+                   topP: 0.8,
+                   topK: 40
+               }
+           };
+           
+           try {
+               const response = await fetch(url, {
+                   method: "POST",
+                   headers: { "Content-Type": "application/json" },
+                   body: JSON.stringify(requestBody)
+               });
+               
+               const data = await response.json();
+               
+               if (!response.ok || data.error) {
+                   console.error("Error processing message:", data?.error?.message || "Unknown error");
+                   sendResponse({reply: "Sorry, I encountered an error. Please try again."});
+                   return;
+               }
+               
+               const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 
+                            "I couldn't process that. Please try again.";
+               
+               // Cache the response
+               await storeCachedItem(cacheKey, reply);
+               
+               sendResponse({reply: reply});
+           } catch (error) {
+               console.error("Error in message processing:", error);
+               sendResponse({reply: "Sorry, I encountered an error processing your message."});
+           }
         });
       });
       
@@ -1106,26 +1170,26 @@ if (Array.isArray(contacts) && contacts.length > 0) {
         
       
       const prompt = `
-You are an email assistant.
-
-1. ONLY use the contacts below for the "To" field.
-2. Match by name. 
-3. If no contact matches, ask for email and use it 
-4. Generate a  professional email based on ONLY on the user's request.
-
-Known contacts:
-${contactLines}
-
-User said: "${request.message}"
-
-Respond ONLY in this format:
-
-To: actual@email.com  
-Subject: email subject  
-xz 
-email body text
-`;
-
+      You are an email assistant. You MUST generate a professional email based on the user's request.
+      
+      1. ONLY use the contacts listed below.
+      2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email  "
+      3. The subject and body should directly reflect what the user asked.
+      4. the email should be professional and well written, and a proper length.
+      5. sign it with the users name from the email that you are sending from.(do not write sent from)
+      6. Follow this format exactly:
+      
+      To: [recipient@example.com]  
+      Subject: [email subject]  
+      Body:  
+      [email message]
+      
+      Known contacts:
+      ${contactLines}
+      
+      User said: "${request.message}"
+      `;
+      
       
 
   
@@ -1140,9 +1204,19 @@ email body text
         const data = await res.json();
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
   
-        const to = text.match(/To:\s*(.*)/i)?.[1]?.trim() || "someone@example.com";
-        const subject = text.match(/Subject:\s*(.*)/i)?.[1]?.trim() || "General Inquiry";
-        const body = text.match(/Body:\s*([\s\S]*)/i)?.[1]?.trim() || "This is a default message body.";
+        const toMatch = text.match(/To:\s*(.*)/i);
+        const subjectMatch = text.match(/Subject:\s*(.*)/i);
+        const bodyMatch = text.match(/Body:\s*([\s\S]*)/i);
+        
+        if (!toMatch || !subjectMatch || !bodyMatch) {
+          sendResponse({ reply: "❌ I couldn't generate a complete email. Please rephrase your request or provide more details." });
+          return;
+        }
+        
+        const to = toMatch[1].trim();
+        const subject = subjectMatch[1].trim();
+        const body = bodyMatch[1].trim();
+        
   
         chrome.storage.local.set({
           pendingEmail: { to, subject, body }
