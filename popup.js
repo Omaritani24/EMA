@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshEvents = document.getElementById('refresh-events');
 
     // Add initial greeting
-    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
+    addMessageToChat("Hi! I'm EMA, your email assistant. How can I help? 👋", 'bot');
 
     // Function to handle sending messages
     function sendMessage() {
