@@ -3,14 +3,109 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatInput = document.getElementById('chat-input');
     const chatbox = document.getElementById('chatbox');
     const sendButton = document.getElementById('send-button');
+    const micButton = document.getElementById('mic-button');
+    const statusMessage = document.getElementById('status-message');
     const emailFilter = document.getElementById('email-filter');
     const refreshButton = document.getElementById('refresh-emails');
     const emailSummary = document.getElementById('email-summary');
     const calendarEvents = document.getElementById('calendar-events');
     const refreshEvents = document.getElementById('refresh-events');
 
+    // Speech recognition setup
+    let recognition = null;
+    let isListening = false;
+
+    // Check if browser supports speech recognition
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        // Initialize speech recognition
+        recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        // Handle recognition results
+        recognition.onresult = function(event) {
+            const transcript = Array.from(event.results)
+                .map(result => result[0].transcript)
+                .join('');
+            
+            chatInput.value = transcript;
+            
+            // Show the transcript as it's being recognized
+            showStatus(transcript);
+        };
+
+        // Handle end of speech
+        recognition.onend = function() {
+            isListening = false;
+            micButton.classList.remove('active');
+            hideStatus();
+            
+            // If we got text, send the message after a brief delay
+            if (chatInput.value.trim()) {
+                setTimeout(() => {
+                    sendMessage();
+                }, 500);
+            }
+        };
+
+        // Handle errors
+        recognition.onerror = function(event) {
+            console.error('Speech recognition error:', event.error);
+            isListening = false;
+            micButton.classList.remove('active');
+            
+            if (event.error === 'not-allowed') {
+                showStatus('Microphone access denied', 3000);
+            } else {
+                showStatus('Speech recognition error', 3000);
+            }
+        };
+
+        // Set up microphone button
+        micButton.addEventListener('click', toggleSpeechRecognition);
+    } else {
+        // Hide mic button if speech recognition is not supported
+        micButton.style.display = 'none';
+        console.warn('Speech recognition not supported in this browser');
+    }
+
+    // Function to toggle speech recognition
+    function toggleSpeechRecognition() {
+        if (isListening) {
+            recognition.stop();
+            isListening = false;
+            micButton.classList.remove('active');
+            hideStatus();
+        } else {
+            recognition.start();
+            isListening = true;
+            micButton.classList.add('active');
+            showStatus('Listening...');
+            // Clear any existing text
+            chatInput.value = '';
+        }
+    }
+
+    // Function to show status message
+    function showStatus(message, duration = 0) {
+        statusMessage.textContent = message;
+        statusMessage.classList.add('visible');
+        
+        if (duration > 0) {
+            setTimeout(() => {
+                hideStatus();
+            }, duration);
+        }
+    }
+
+    // Function to hide status message
+    function hideStatus() {
+        statusMessage.classList.remove('visible');
+    }
+
     // Add initial greeting
-    addMessageToChat("Hi! I'm EMA, your email assistant. How can I help? 👋", 'bot');
+    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
 
     // Function to handle sending messages
     function sendMessage() {
@@ -24,20 +119,13 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Send to background script for processing
             chrome.runtime.sendMessage(
-                { action: "processMessage", message: message },
+                {action: "processMessage", message: message},
                 function(response) {
-                    if (chrome.runtime.lastError) {
-                        console.error("❌ Could not connect to background:", chrome.runtime.lastError.message);
-                        addMessageToChat("⚠️ EMA is sleeping. Please reopen the extension and try again.", "bot");
-                        return;
-                    }
-            
                     if (response && response.reply) {
                         addMessageToChat(response.reply, 'bot');
                     }
                 }
             );
-            
         }
     }
 

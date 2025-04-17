@@ -114,11 +114,7 @@ async function extractCalendarEvents(emails) {
   
   try {
     // Check if we have cached events
-    const cachedEvents = await getEventsFromCache();
-    if (cachedEvents && cachedEvents.length > 0) {
-      console.log("Using cached calendar events");
-      return cachedEvents;
-    let cachedEvents = [];
+    let cachedEvents;
     try {
       cachedEvents = await getEventsFromCache();
       if (cachedEvents && cachedEvents.length > 0) {
@@ -131,8 +127,6 @@ async function extractCalendarEvents(emails) {
     }
     
     // No cached events, proceed with API call
-    console.log(" Extracting calendar events using Gemini API");
-
     console.log("🔄 Extracting calendar events using Gemini API");
 
     // Create array to track which email contains which event
@@ -1461,4 +1455,69 @@ function forceReauthenticate(callback) {
       if (callback) callback(token);
     });
   });
+}
+
+// Helper function to extract events from text when JSON parsing fails
+function extractEventsFromText(text, emailToEventMap) {
+  console.log("🔍 Attempting to extract events from raw text");
+  
+  // If text is empty or invalid, return empty array
+  if (!text || typeof text !== 'string' || text.length < 10) {
+    return [];
+  }
+  
+  const events = [];
+  // Look for date patterns in the text
+  const dateRegex = /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/g;
+  const timeRegex = /(\d{1,2}[:\.]\d{2}\s*(am|pm|AM|PM)?)/g;
+  
+  // Look for event-like sections in the text
+  const eventSegments = text.split(/Event\s*\d+:|\d+\.\s*Title:|[\n\r]{2,}/);
+  
+  eventSegments.forEach((segment, index) => {
+    // Skip if segment is too short
+    if (segment.length < 10) return;
+    
+    // Extract potential event data
+    const titleMatch = segment.match(/title[:\s]+([^\n\r]+)/i) || 
+                      segment.match(/([^:\n\r]{5,})/);
+    const dateMatch = segment.match(/date[:\s]+([^\n\r]+)/i) || 
+                    segment.match(dateRegex);
+    const timeMatch = segment.match(/time[:\s]+([^\n\r]+)/i) || 
+                    segment.match(timeRegex);
+    const locationMatch = segment.match(/location[:\s]+([^\n\r]+)/i);
+    const descMatch = segment.match(/description[:\s]+([^\n\r]+)/i);
+    const emailIndexMatch = segment.match(/email(?:\s*number|\s*index)?[:\s]+(\d+)/i) || 
+                          segment.match(/found in email[:\s]+(\d+)/i);
+    
+    // Only proceed if we have at least a date
+    if (dateMatch) {
+      const title = titleMatch ? titleMatch[1].trim() : `Event from extraction ${index + 1}`;
+      const dateStr = dateMatch[1] ? dateMatch[1].trim() : dateMatch[0].trim();
+      const standardDate = standardizeDate(dateStr);
+      const time = timeMatch ? (timeMatch[1] ? timeMatch[1].trim() : timeMatch[0].trim()) : "";
+      const location = locationMatch ? locationMatch[1].trim() : "";
+      const description = descMatch ? descMatch[1].trim() : segment.substring(0, 100) + "...";
+      const emailIndex = emailIndexMatch ? parseInt(emailIndexMatch[1]) : 0;
+      
+      // Find the source email
+      const sourceEmail = emailToEventMap[emailIndex] || (emailToEventMap.length > 0 ? emailToEventMap[0] : null);
+      
+      events.push({
+        id: `event_${Date.now()}_extracted_${index}`,
+        title: title,
+        date: standardDate,
+        time: time,
+        location: location,
+        description: description,
+        timestamp: Date.now(),
+        eventDate: new Date(standardDate).getTime() || Date.now(),
+        added: false,
+        sourceEmailId: sourceEmail ? sourceEmail.emailId : null
+      });
+    }
+  });
+  
+  console.log(`✅ Extracted ${events.length} events from raw text`);
+  return events;
 }
