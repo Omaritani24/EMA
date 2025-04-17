@@ -321,7 +321,7 @@ function displaySummary(summaryText) {
 
 document.addEventListener("DOMContentLoaded", () => {
     const chatbox = document.getElementById("chatbox");
-    const messageInput = document.getElementById("messageInput");
+    const messageInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("sendBtn");
   
     // Load chat history from storage
@@ -358,9 +358,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   
     // Event listeners
-    sendBtn.addEventListener("click", sendMessage);
-    messageInput.addEventListener("keypress", (event) => {
-      if (event.key === "Enter") sendMessage();
-    });
-  });
+    if (sendBtn) {
+        sendBtn.addEventListener("click", sendMessage);
+    }
+    if (messageInput) {
+        messageInput.addEventListener("keypress", (event) => {
+            if (event.key === "Enter") sendMessage();
+        });
+    }
+});
   
