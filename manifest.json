@@ -7,26 +7,35 @@
     "permissions": [
         "identity",
         "identity.email",
-        "storage"
+        "storage",
+        "scripting"
     ],
     "host_permissions": [
         "https://www.googleapis.com/",
-        "https://generativelanguage.googleapis.com/"
+        "https://generativelanguage.googleapis.com/",
+        "https://mail.google.com/*"
     ],
 
     "oauth2": {
       "client_id": "327765316506-4spv456cip27evtvel6ad38m23l2p3gc.apps.googleusercontent.com",
       "scopes": [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/calendar.readonly"
-
-     ]
-
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events"
+      ]
     },
     "background": {
       "service_worker": "background.js"
     },
+    "content_scripts": [
+      {
+        "matches": ["https://mail.google.com/*"],
+        "js": ["content.js"],
+        "run_at": "document_end",
+        "all_frames": true
+      }
+    ],
     "action": {
       "default_popup": "popup.html",
       "default_icon": {

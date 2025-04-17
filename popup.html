@@ -53,6 +53,120 @@
       color: #555;
     }
 
+    /* Email Selection Options */
+    .email-options {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+      background-color: white;
+      border-radius: 8px;
+      padding: 12px 15px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .email-options label {
+      font-size: 0.9rem;
+      color: #555;
+      margin-right: 10px;
+    }
+
+    .email-filter {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background-color: white;
+      font-size: 0.9rem;
+      color: #333;
+    }
+
+    .refresh-button {
+      display: flex;
+      align-items: center;
+      background: none;
+      border: none;
+      padding: 8px 12px;
+      margin-left: 10px;
+      cursor: pointer;
+      color: #66aab8;
+      transition: all 0.2s ease;
+      border-radius: 5px;
+    }
+
+    .refresh-button:hover {
+      background-color: #f0f7f9;
+    }
+
+    .refresh-button svg {
+      margin-right: 5px;
+    }
+
+    /* Email Summary Section */
+    .summary-section {
+      margin: 20px 0;
+      background-color: white;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .summary-section h3 {
+      font-size: 1.1rem;
+      color: #333;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 8px;
+    }
+
+    .email-summary-content {
+      font-size: 0.95rem;
+      color: #555;
+      min-height: 50px;
+      max-height: 100px;
+      overflow-y: auto;
+      line-height: 1.4;
+      padding: 5px;
+    }
+
+    .email-summary-content p {
+      margin: 0;
+    }
+
+    .summary-placeholder {
+      color: #999;
+      font-style: italic;
+      text-align: center;
+      padding: 10px 0;
+    }
+
+    .summary-category {
+      margin-bottom: 15px;
+    }
+
+    .summary-category h4 {
+      font-size: 0.95rem;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    .summary-category ul {
+      list-style-type: none;
+      padding-left: 10px;
+    }
+
+    .summary-category li {
+      margin-bottom: 6px;
+      padding-left: 15px;
+      position: relative;
+    }
+
+    .summary-category li:before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: #66aab8;
+    }
+
     /* Summary items */
     .summary-list {
       list-style: none;
@@ -110,136 +224,359 @@
       cursor: pointer;
     }
 
-    /* Possible calendar events section */
-    .events-header {
+    /* Calendar events section */
+    .calendar-events-section {
+      margin: 20px 0;
+      background-color: white;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .calendar-events-section h3 {
+      font-size: 1.1rem;
+      color: #333;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .calendar-events-section h3 .refresh-events {
+      font-size: 0.8rem;
+      color: #66aab8;
+      cursor: pointer;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      margin-top: 30px;
-      margin-bottom: 10px;
     }
 
-    .events-header h2 {
-      font-size: 1rem;
-      color: #333;
+    .calendar-events-section h3 .refresh-events svg {
+      width: 14px;
+      height: 14px;
+      margin-right: 4px;
     }
 
-    .event-list {
-      margin-left: 10px;
+    .calendar-events-content {
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .events-placeholder {
+      color: #999;
+      font-style: italic;
+      text-align: center;
+      padding: 10px 0;
     }
 
     .event-item {
+      border-radius: 8px;
+      background-color: #f9f9f9;
+      margin-bottom: 10px;
+      padding: 12px;
+      border-left: 4px solid #9575cd;
+      position: relative;
+    }
+
+    .event-item.added {
+      opacity: 0.7;
+      border-left-color: #66bb6a;
+    }
+
+    .event-title {
+      font-weight: bold;
+      font-size: 0.95rem;
+      margin-bottom: 5px;
+      color: #333;
+    }
+
+    .event-info {
       display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
+      margin-bottom: 5px;
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .event-date {
+      margin-right: 10px;
+      display: flex;
+      align-items: center;
+    }
+
+    .event-date svg, 
+    .event-time svg, 
+    .event-location svg {
+      width: 12px;
+      height: 12px;
+      margin-right: 4px;
+      color: #9575cd;
+    }
+
+    .event-time {
+      display: flex;
+      align-items: center;
+    }
+
+    .event-location {
+      margin-top: 5px;
+      font-size: 0.85rem;
+      color: #666;
+      display: flex;
+      align-items: center;
     }
 
     .event-description {
-      font-size: 0.9rem;
-      color: #333;
+      margin-top: 5px;
+      font-size: 0.85rem;
+      color: #777;
+      line-height: 1.4;
     }
 
-    .add-link {
-      font-size: 0.9rem;
-      color: #007bff;
+    .add-to-calendar {
+      background-color: #9575cd;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 10px;
+      margin-top: 8px;
       cursor: pointer;
-      text-decoration: underline;
-      margin-left: 10px;
+      font-size: 0.8rem;
+      display: flex;
+      align-items: center;
+      transition: background-color 0.2s;
     }
 
-    /* Chatbox at the bottom */
-    .chatbox {
-      margin-top: 30px;
-      position: bottom;
+    .add-to-calendar svg {
+      width: 14px;
+      height: 14px;
+      margin-right: 4px;
     }
 
-    .chatbox-label {
+    .add-to-calendar:hover {
+      background-color: #7e57c2;
+    }
+
+    .add-to-calendar:disabled {
+      background-color: #d1c4e9;
+      cursor: not-allowed;
+    }
+
+    .event-added-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background-color: #66bb6a;
+      color: white;
+      font-size: 0.7rem;
+      border-radius: 12px;
+      padding: 3px 8px;
+    }
+
+    /* Chat Section */
+    .chat-container {
+      background-color: white;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 20px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+      height: 300px;
+    }
+
+    .chat-header {
+      background-color: #9575cd;
+      color: white;
+      padding: 10px 15px;
+      font-size: 1rem;
       font-weight: bold;
-      margin-bottom: 6px;
+    }
+
+    .chatbox {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message {
+      max-width: 80%;
+      padding: 8px 12px;
+      border-radius: 18px;
+      line-height: 1.4;
+      font-size: 0.9rem;
+      position: relative;
+      margin-bottom: 5px;
+    }
+
+    .user {
+      background-color: #e1e1e1;
       color: #333;
+      align-self: flex-end;
+      border-bottom-right-radius: 5px;
+    }
+
+    .bot {
+      background-color: #f1f0ff;
+      color: #333;
+      align-self: flex-start;
+      border-bottom-left-radius: 5px;
+    }
+
+    .chat-input-container {
+      display: flex;
+      padding: 10px;
+      border-top: 1px solid #eee;
     }
 
     .chat-input {
-      width: 100%;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-      font-size: 1rem;
+      flex: 1;
+      border: 1px solid #ddd;
+      border-radius: 20px;
+      padding: 8px 15px;
+      outline: none;
+      font-size: 0.9rem;
     }
 
-    /* "EMA" branding (optional) */
-    .branding {
+    .chat-input:focus {
+      border-color: #9575cd;
+    }
+
+    .send-button {
+      background-color: #9575cd;
+      color: white;
+      border: none;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      margin-left: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.2s;
+    }
+
+    .send-button:hover {
+      background-color: #7e57c2;
+    }
+
+    .send-button svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .status-label {
+      font-size: 0.8rem;
+      color: #888;
+      margin-top: 3px;
+      padding-left: 10px;
+    }
+
+    /* Helper for visually hiding elements but keeping them accessible */
+    .sr-only {
       position: absolute;
-      bottom: -40px;
-      right: 20px;
-      font-weight: bold;
-      font-size: 1rem;
-      color: #666;
-      opacity: 0.5;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Header -->
     <div class="header">
-      <h1>Your Daily Summary</h1>
-      <p>Today you received</p>
+      <h1>Enhanced Mail Assistant</h1>
+      <p>Your personalized email summary</p>
     </div>
 
-    <!-- Summary List -->
-    <ul class="summary-list">
-      <li class="summary-item">
-        <div class="summary-left">
-          <div class="circle circle-pink">3</div>
-          <span class="summary-label">From friends and family</span>
-        </div>
-        <span class="view-link">view</span>
-      </li>
-      <li class="summary-item">
-        <div class="summary-left">
-          <div class="circle circle-purple">5</div>
-          <span class="summary-label">From your students</span>
-        </div>
-        <span class="view-link">view</span>
-      </li>
-      <li class="summary-item">
-        <div class="summary-left">
-          <div class="circle circle-green">9</div>
-          <span class="summary-label">Promotions</span>
-        </div>
-        <span class="view-link">view</span>
-      </li>
-    </ul>
-
-    <!-- Possible calendar events -->
-    <div class="events-header">
-      <h2>Possible calendar events</h2>
-      <span class="view-all">view all</span>
+    <!-- Email selection options -->
+    <div class="email-options">
+      <label for="email-filter">Show:</label>
+      <select id="email-filter" class="email-filter">
+        <option value="10">Latest 10 emails</option>
+        <option value="20">Latest 20 emails</option>
+        <option value="unread">Unread emails</option>
+        <option value="all">All recent emails</option>
+      </select>
+      <button id="refresh-emails" class="refresh-button">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+        Refresh
+      </button>
     </div>
-    <div class="summary-item">
-      <div class="summary-left event-description">
-        Dinner at Ahmad's: 4/3/2025 7:00
+
+    <!-- Summary of categories -->
+    <div class="summary-list-container">
+      <ul class="summary-list">
+        <li class="summary-item">
+          <div class="summary-left">
+            <div class="circle circle-pink">0</div>
+            <span class="summary-label">Personal</span>
+          </div>
+          <span class="view-link">View</span>
+        </li>
+        <li class="summary-item">
+          <div class="summary-left">
+            <div class="circle circle-purple">0</div>
+            <span class="summary-label">Work/Student</span>
+          </div>
+          <span class="view-link">View</span>
+        </li>
+        <li class="summary-item">
+          <div class="summary-left">
+            <div class="circle circle-green">0</div>
+            <span class="summary-label">Promotions</span>
+          </div>
+          <span class="view-link">View</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Email Summary Section -->
+    <div class="summary-section">
+      <h3>Email Summary</h3>
+      <div id="email-summary" class="email-summary-content">
+        <p class="summary-placeholder">Loading your email summary...</p>
       </div>
-      <span class="add-link">Add</span>
+    </div>
+    
+    <!-- Calendar Events Section -->
+    <div class="calendar-events-section">
+      <h3>
+        Possible Calendar Events
+        <span class="refresh-events" id="refresh-events">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+          Refresh
+        </span>
+      </h3>
+      <div id="calendar-events" class="calendar-events-content">
+        <p class="events-placeholder">Scanning emails for calendar events...</p>
+      </div>
     </div>
 
-    <!-- Chatbox at the bottom -->
-    <div class="chatbox">
-      <label class="chatbox-label" for="chat-input">EMA</label>
-      <input
-        id="chat-input"
-        class="chat-input"
-        type="text"
-        placeholder="Hello Mohamad, what can I help you with today?"
-      />
+    <!-- Chat Section -->
+    <div class="chat-container">
+      <div class="chat-header">Ask EMA</div>
+      <div id="chatbox" class="chatbox">
+        <!-- Messages will appear here -->
+      </div>
+      <div class="chat-input-container">
+        <input type="text" id="chat-input" class="chat-input" placeholder="Ask a question about your emails...">
+        <button id="send-button" class="send-button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          <span class="sr-only">Send</span>
+        </button>
+      </div>
     </div>
-
-    <!-- Add this in your popup.html where you want the summary to appear -->
-    <div id="summaryContainer"></div>
   </div>
 
-  <!-- Link to external JavaScript file instead of inline script -->
   <script src="popup.js"></script>
 </body>
 </html>
