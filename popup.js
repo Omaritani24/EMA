@@ -24,13 +24,20 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Send to background script for processing
             chrome.runtime.sendMessage(
-                {action: "processMessage", message: message},
+                { action: "processMessage", message: message },
                 function(response) {
+                    if (chrome.runtime.lastError) {
+                        console.error("❌ Could not connect to background:", chrome.runtime.lastError.message);
+                        addMessageToChat("⚠️ EMA is sleeping. Please reopen the extension and try again.", "bot");
+                        return;
+                    }
+            
                     if (response && response.reply) {
                         addMessageToChat(response.reply, 'bot');
                     }
                 }
             );
+            
         }
     }
 
@@ -367,4 +374,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
-  
+setInterval(() => {
+    console.log("🟢 Keeping background alive...");
+  }, 15000);
+   

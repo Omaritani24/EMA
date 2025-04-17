@@ -8,8 +8,10 @@ function authenticateUser(callback) {
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/calendar",
-      "https://www.googleapis.com/auth/calendar.events"
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/gmail.send"
     ]
+    
   }, function (token) {
     if (chrome.runtime.lastError) {
       console.error("Authentication failed:", chrome.runtime.lastError);
@@ -50,12 +52,12 @@ function initSummaryDB() {
     };
     
     dbRequest.onsuccess = function(event) {
-      console.log("✅ IndexedDB initialized successfully");
+      console.log("IndexedDB initialized successfully");
       resolve(event.target.result);
     };
     
     dbRequest.onerror = function(event) {
-      console.error("❌ Error initializing IndexedDB:", event.target.error);
+      console.error(" Error initializing IndexedDB:", event.target.error);
       reject(event.target.error);
     };
   });
@@ -82,16 +84,16 @@ async function storeEmails(emails) {
     
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => {
-        console.log(`✅ Stored ${emails.length} emails in IndexedDB`);
+        console.log(`Stored ${emails.length} emails in IndexedDB`);
         resolve();
       };
       transaction.onerror = (event) => {
-        console.error("❌ Error storing emails:", event.target.error);
+        console.error(" Error storing emails:", event.target.error);
         reject(event.target.error);
       };
     });
   } catch (error) {
-    console.error("❌ Error in storeEmails:", error);
+    console.error(" Error in storeEmails:", error);
   }
 }
 
@@ -101,7 +103,7 @@ async function extractCalendarEvents(emails) {
   const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
 
   if (!emails || emails.length === 0) {
-    console.warn("⚠️ No emails provided for event extraction.");
+    console.warn(" No emails provided for event extraction.");
     return [];
   }
   
@@ -109,12 +111,12 @@ async function extractCalendarEvents(emails) {
     // Check if we have cached events
     const cachedEvents = await getEventsFromCache();
     if (cachedEvents && cachedEvents.length > 0) {
-      console.log("🎯 Using cached calendar events");
+      console.log("Using cached calendar events");
       return cachedEvents;
     }
     
     // No cached events, proceed with API call
-    console.log("🔄 Extracting calendar events using Gemini API");
+    console.log(" Extracting calendar events using Gemini API");
 
     // Clean and join email snippets into a single prompt
     const emailContent = emails.map(email => email.snippet).join("\n\n");
@@ -708,29 +710,32 @@ function fetchEmails(token, filter = '10') {
     });
 }
 
-
-// Fetch full email content for a given message ID
 function fetchEmailContent(token, messageId) {
-  return fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}`, {
+  return fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     }
   })
-    .then(response => {
-      console.log(`Response status for message ${messageId}:`, response.status);
-      return response.json();
-    })
+    .then(response => response.json())
     .then(data => {
-      console.log(`Email content for message ${messageId}:`, data);
-      return data;
+      const headers = data.payload?.headers || [];
+      const from = headers.find(h => h.name.toLowerCase() === "from")?.value || "";
+      const to = headers.find(h => h.name.toLowerCase() === "to")?.value || "";
+
+      return {
+        ...data,
+        from,
+        to
+      };
     })
     .catch(error => {
-      console.error(`Error fetching email content for message ${messageId}:`, error);
+      console.error(`❌ Error fetching email content for message ${messageId}:`, error);
       return null;
     });
 }
+
 
 async function summarizeEmails(emails) {
   // Replace with your actual Gemini API key (keep it secret!)
@@ -820,10 +825,39 @@ async function processEmailsAndSummarize(token) {
     
     // Fetch full content for each message ID
     let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
+   
     const fullEmails = await Promise.all(emailPromises);
-    
-    // Filter out any failed fetches
     const validEmails = fullEmails.filter(email => email !== null);
+
+    // Filter out any failed fetches
+    const contactsMap = new Map();
+
+    validEmails.forEach(email => {
+      const fromHeader = email.from || "";
+      const toHeader = email.to || "";
+    
+      [fromHeader, toHeader].forEach(raw => {
+        if (!raw) return;
+        raw.split(',').forEach(entry => {
+          const match = entry.match(/(.*)<(.*)>/);  // "Name <email>"
+          if (match) {
+            const name = match[1].trim();
+            const emailAddr = match[2].trim();
+            contactsMap.set(name, emailAddr);
+          } else if (entry.includes('@')) {
+            const emailOnly = entry.trim();
+            contactsMap.set(emailOnly.split('@')[0], emailOnly);
+          }
+        });
+      });
+    });
+    
+    const knownContacts = Array.from(contactsMap.entries()); // <-- array of [name, email]
+    chrome.storage.local.set({ knownContacts });
+    
+    console.log("👥 Contacts found in inbox:", knownContacts);
+
+
     
     // Store emails in IndexedDB
     await storeEmails(validEmails);
@@ -1013,66 +1047,120 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         return true; // Required for async response
     }
+
     
-    if (request.action === "processMessage") {
-        chrome.storage.local.get(['emails'], async function(result) {
-            const emails = result.emails || [];
-            
-            // Create a more conversational prompt
-            const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
-            You have access to the user's recent emails and can help answer questions about them.
-            
-            Context (Recent Emails):
-            ${emails.map(email => `Email: ${email.snippet}`).join('\n')}
-
-            Instructions:
-            - Be conversational and friendly
-            - Only provide information that's relevant to the user's question
-            - If asked about emails you don't have access to, let the user know
-            
-            User message: ${request.message}`;
-            
-            // First check cache before calling API
-            const cacheKey = `chat_${generateEmailContentHash([{snippet: request.message}])}`;
-            const cachedResponse = await getCachedItem(cacheKey);
-            
-            if (cachedResponse) {
-                console.log("🎯 Using cached chat response");
-                sendResponse({reply: cachedResponse});
-                return;
-            }
-            
-            // No cache hit, call Gemini API
-            const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
-            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-            
-            const requestBody = {
-                contents: [{ parts: [{ text: prompt }] }]
-            };
-            
-            fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(requestBody)
-            })
-            .then(response => response.json())
-            .then(data => {
-                const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "I couldn't process that. Please try again.";
-                
-                // Cache the response
-                storeCachedItem(cacheKey, reply);
-                
-                sendResponse({reply: reply});
-            })
-            .catch(error => {
-                console.error("Error processing message:", error);
-                sendResponse({reply: "Sorry, I encountered an error processing your message."});
-            });
+  if (request.action === "processMessage") {
+    (async () => {
+      const result = await new Promise(resolve => {
+        chrome.storage.local.get(['pendingEmail'], resolve);
+      });
+        const contacts = await new Promise(resolve => {
+        chrome.storage.local.get(['knownContacts'], result => {
+          resolve(result.knownContacts || []);
         });
-        return true; // Required for async response
-    }
-});
+      });
+      
+      let contactLines = "";
 
+if (Array.isArray(contacts) && contacts.length > 0) {
+  contactLines = contacts.map(([name, email]) => `- ${name}: ${email}`).join('\n');
+} else {
+  contactLines = "- someone@example.com";
+}
+
+      const userMessage = request.message.toLowerCase();
+  
+      // ✅ Handle YES: send immediately
+      if (userMessage === "yes" && result.pendingEmail) {
+        const { to, subject, body } = result.pendingEmail;
+  
+        if (!to || !subject || !body) {
+          sendResponse({ reply: "⚠️ Sorry, I don't have a complete email to send. Try again with more context." });
+          return;
+        }
+  
+        authenticateUser(async (token) => {
+          try {
+            await sendEmail(token, to, subject, body);
+            chrome.storage.local.remove('pendingEmail');
+            sendResponse({ reply: `✅ Email sent to ${to}. What else can I help you with?` });
+          } catch (err) {
+            sendResponse({ reply: "❌ Failed to send the email. Please try again." });
+          }
+        });
+  
+        return;
+      }
+  
+      // ✅ Handle NO: cancel
+      if (userMessage === "no" && result.pendingEmail) {
+        chrome.storage.local.remove('pendingEmail');
+        sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
+        return;
+      }
+   
+      // ✅ Generate email from freeform input using Gemini
+      const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+      const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+      
+        
+      
+      const prompt = `
+You are an email assistant.
+
+1. ONLY use the contacts below for the "To" field.
+2. Match by name. 
+3. If no contact matches, ask for email and use it 
+4. Generate a  professional email based on ONLY on the user's request.
+
+Known contacts:
+${contactLines}
+
+User said: "${request.message}"
+
+Respond ONLY in this format:
+
+To: actual@email.com  
+Subject: email subject  
+xz 
+email body text
+`;
+
+      
+
+  
+  
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+  
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
+  
+        const to = text.match(/To:\s*(.*)/i)?.[1]?.trim() || "someone@example.com";
+        const subject = text.match(/Subject:\s*(.*)/i)?.[1]?.trim() || "General Inquiry";
+        const body = text.match(/Body:\s*([\s\S]*)/i)?.[1]?.trim() || "This is a default message body.";
+  
+        chrome.storage.local.set({
+          pendingEmail: { to, subject, body }
+        });
+  
+        sendResponse({
+          reply: `Here's your email:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`
+        });
+      } catch (err) {
+        console.error("❌ Gemini error:", err);
+        sendResponse({ reply: "❌ Error generating the email. Try again later." });
+      }
+    })();
+  
+    return true;
+  }
+});
+   
 // Helper functions for the chat cache
 async function getCachedItem(key) {
     return new Promise((resolve) => {
@@ -1086,6 +1174,28 @@ async function storeCachedItem(key, value) {
     chrome.storage.local.set({[key]: value}, function() {
         console.log(`Cached item stored with key: ${key}`);
     });
+}
+async function sendEmail(token, to, subject, message) {
+  const email = 
+    `To: ${to}\r\n` +
+    `Subject: ${subject}\r\n` +
+    `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
+    `${message}`;
+
+  const encodedMessage = btoa(unescape(encodeURIComponent(email)))
+    .replace(/\+/g, '-').replace(/\//g, '_');
+
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw: encodedMessage })
+  });
+
+  const data = await res.json();
+  return data;
 }
 
 // Force re-authentication by removing tokens and getting a fresh one
