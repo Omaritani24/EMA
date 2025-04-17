@@ -23,26 +23,31 @@ function authenticateUser(callback) {
 // Initialize the IndexedDB for caching summaries
 function initSummaryDB() {
   return new Promise((resolve, reject) => {
-    const dbRequest = indexedDB.open('EMADatabase', 1);
+    const dbRequest = indexedDB.open('EMADatabase', 2); // Increase version to trigger upgrade
     
     dbRequest.onupgradeneeded = function(event) {
       const db = event.target.result;
+      const oldVersion = event.oldVersion;
+      console.log(`Upgrading IndexedDB from version ${oldVersion} to ${db.version}`);
       
-      // Create a store for email summaries
+      // Create a store for email summaries if it doesn't exist
       if (!db.objectStoreNames.contains('summaries')) {
+        console.log("Creating 'summaries' store");
         const summaryStore = db.createObjectStore('summaries', { keyPath: 'id' });
         summaryStore.createIndex('hash', 'hash', { unique: true });
         summaryStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
       
-      // Create a store for email metadata
+      // Create a store for email metadata if it doesn't exist
       if (!db.objectStoreNames.contains('emails')) {
+        console.log("Creating 'emails' store");
         const emailStore = db.createObjectStore('emails', { keyPath: 'id' });
         emailStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
       
-      // Create a store for calendar events
+      // Create a store for calendar events if it doesn't exist
       if (!db.objectStoreNames.contains('events')) {
+        console.log("Creating 'events' store");
         const eventStore = db.createObjectStore('events', { keyPath: 'id' });
         eventStore.createIndex('timestamp', 'timestamp', { unique: false });
         eventStore.createIndex('eventDate', 'eventDate', { unique: false });
@@ -107,17 +112,33 @@ async function extractCalendarEvents(emails) {
   
   try {
     // Check if we have cached events
-    const cachedEvents = await getEventsFromCache();
-    if (cachedEvents && cachedEvents.length > 0) {
-      console.log("🎯 Using cached calendar events");
-      return cachedEvents;
+    let cachedEvents = [];
+    try {
+      cachedEvents = await getEventsFromCache();
+      if (cachedEvents && cachedEvents.length > 0) {
+        console.log("🎯 Using cached calendar events");
+        return cachedEvents;
+      }
+    } catch (cacheError) {
+      console.error("❌ Error retrieving cached events:", cacheError);
+      // Continue with API call if cache fails
     }
     
     // No cached events, proceed with API call
     console.log("🔄 Extracting calendar events using Gemini API");
 
+    // Create array to track which email contains which event
+    let emailToEventMap = [];
+    
     // Clean and join email snippets into a single prompt
-    const emailContent = emails.map(email => email.snippet).join("\n\n");
+    const emailContent = emails.map((email, index) => {
+      emailToEventMap.push({ 
+        emailId: email.id, 
+        snippet: email.snippet.substring(0, 100),
+        index: index 
+      });
+      return `Email ${index}: ${email.snippet}`;
+    }).join("\n\n");
 
     const prompt = `Extract all dates, times, and events from these emails. 
     For each event, please provide:
@@ -126,6 +147,7 @@ async function extractCalendarEvents(emails) {
     3. Time (if available)
     4. Location (if available)
     5. A brief description
+    6. The email number (0, 1, 2, etc.) where you found this event
 
     Format the output as a JSON array with objects containing these fields:
     [{
@@ -133,16 +155,38 @@ async function extractCalendarEvents(emails) {
       "date": "YYYY-MM-DD",
       "time": "HH:MM AM/PM",
       "location": "Location",
-      "description": "Brief description of the event"
+      "description": "Brief description of the event",
+      "emailIndex": 0
     }]
 
     Only extract real events with actual dates. Do not include hypothetical events or general mentions of days.
     If there are no events, return an empty array.
+    The emailIndex must be included for each event and should reference the email number where you found it.
     
     Emails to analyze:
     ${emailContent}`;
 
-    console.log("📝 Constructed prompt for event extraction:\n", prompt);
+    console.log("📝 Constructed prompt for event extraction");
+
+    // Check if we've hit the API rate limit
+    const rateLimitKey = 'gemini_rate_limited';
+    const rateLimitStatus = await new Promise(resolve => {
+      chrome.storage.local.get([rateLimitKey], result => {
+        resolve(result[rateLimitKey]);
+      });
+    });
+
+    // If we've hit the rate limit within the last hour, use a fallback approach
+    if (rateLimitStatus) {
+      const now = Date.now();
+      if (now - rateLimitStatus < 3600000) { // 1 hour
+        console.warn("⚠️ Gemini API rate limited - using fallback event detection");
+        return createBasicEventsFromEmails(emails);
+      } else {
+        // Reset the rate limit status if it's been more than an hour
+        chrome.storage.local.remove([rateLimitKey]);
+      }
+    }
 
     // Gemini API URL
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
@@ -169,12 +213,22 @@ async function extractCalendarEvents(emails) {
 
     if (!response.ok || data.error) {
       console.error("❌ Error extracting events with Gemini:", data?.error?.message || "Unknown error");
+      
+      // Check if this is a quota/rate limit error
+      const errorMessage = data?.error?.message || "";
+      if (errorMessage.includes("quota") || errorMessage.includes("rate limit")) {
+        // Store the timestamp of when we hit the rate limit
+        chrome.storage.local.set({ [rateLimitKey]: Date.now() });
+        // Use fallback approach
+        return createBasicEventsFromEmails(emails);
+      }
+      
       return [];
     }
 
     // Extract events from Gemini response
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    console.log("✅ Raw event extraction received:", rawText);
+    console.log("✅ Raw event extraction received");
     
     // Parse JSON from response
     let events = [];
@@ -185,64 +239,147 @@ async function extractCalendarEvents(emails) {
         const jsonText = jsonMatch[0];
         events = JSON.parse(jsonText);
         
-        // Add unique IDs and timestamps to events
-        events = events.map((event, index) => ({
-          ...event,
-          id: `event_${Date.now()}_${index}`,
-          timestamp: Date.now(),
-          eventDate: new Date(event.date).getTime() || Date.now(),
-          added: false
-        }));
+        // Add unique IDs, timestamps, and source email IDs to events
+        events = events.map((event, index) => {
+          // Map the event back to the source email ID
+          const emailIndex = event.emailIndex !== undefined ? event.emailIndex : 0;
+          const sourceEmail = emailToEventMap[emailIndex] || emailToEventMap[0];
+          
+          return {
+            ...event,
+            id: `event_${Date.now()}_${index}`,
+            timestamp: Date.now(),
+            eventDate: new Date(event.date).getTime() || Date.now(),
+            added: false,
+            sourceEmailId: sourceEmail ? sourceEmail.emailId : null
+          };
+        });
       }
     } catch (error) {
       console.error("❌ Error parsing events JSON:", error);
       // Try a more forgiving approach if the JSON is malformed
-      events = extractEventsFromText(rawText);
+      events = extractEventsFromText(rawText, emailToEventMap);
     }
     
-    console.log("✅ Extracted events:", events);
+    console.log("✅ Extracted events:", events.length);
     
-    // Store events in cache
+    // Store events in cache and local storage
     if (events.length > 0) {
-      await storeEventsInCache(events);
+      try {
+        await storeEventsInCache(events);
+      } catch (storageError) {
+        console.error("❌ Error storing events in cache:", storageError);
+        // Store in local storage as fallback
+        chrome.storage.local.set({ events: events });
+      }
     }
     
     return events;
   } catch (err) {
     console.error("❌ Network/Fetch error in event extraction:", err);
-    return [];
+    // In case of any error, try to extract events with a simple approach
+    return createBasicEventsFromEmails(emails);
   }
 }
 
-// Fallback function to extract events from text if JSON parsing fails
-function extractEventsFromText(text) {
-  const events = [];
+// Helper function to standardize date formats
+function standardizeDate(dateStr) {
+  // Try different date formats
+  let date;
   
-  // Look for event-like structures in the text
-  const eventMatches = text.match(/title[:\s]+["']?([^"'\n]+)["']?.*?date[:\s]+["']?(\d{4}-\d{2}-\d{2})["']?/gis);
+  // Try direct parsing first
+  date = new Date(dateStr);
+  if (!isNaN(date)) {
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD
+  }
   
-  if (eventMatches) {
-    eventMatches.forEach((match, index) => {
-      const titleMatch = match.match(/title[:\s]+["']?([^"'\n]+)["']?/i);
-      const dateMatch = match.match(/date[:\s]+["']?(\d{4}-\d{2}-\d{2})["']?/i);
-      const timeMatch = match.match(/time[:\s]+["']?([^"'\n]+)["']?/i);
-      const locationMatch = match.match(/location[:\s]+["']?([^"'\n]+)["']?/i);
-      const descriptionMatch = match.match(/description[:\s]+["']?([^"'\n]+)["']?/i);
-      
-      if (titleMatch && dateMatch) {
-        events.push({
-          id: `event_${Date.now()}_${index}`,
-          title: titleMatch[1].trim(),
-          date: dateMatch[1].trim(),
-          time: timeMatch ? timeMatch[1].trim() : "",
-          location: locationMatch ? locationMatch[1].trim() : "",
-          description: descriptionMatch ? descriptionMatch[1].trim() : "",
-          timestamp: Date.now(),
-          eventDate: new Date(dateMatch[1].trim()).getTime() || Date.now(),
-          added: false
-        });
+  // Try MM/DD/YYYY or DD/MM/YYYY
+  const slashParts = dateStr.split(/[\/.-]/);
+  if (slashParts.length === 3) {
+    // Assume MM/DD/YYYY first
+    const month = parseInt(slashParts[0]);
+    const day = parseInt(slashParts[1]);
+    let year = parseInt(slashParts[2]);
+    
+    // Add century if needed
+    if (year < 100) {
+      year += year < 50 ? 2000 : 1900;
+    }
+    
+    // Validate parts
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      date = new Date(year, month - 1, day);
+      if (!isNaN(date)) {
+        return date.toISOString().split('T')[0];
       }
-    });
+    }
+    
+    // Try DD/MM/YYYY if MM/DD/YYYY failed
+    const dayAlt = parseInt(slashParts[0]);
+    const monthAlt = parseInt(slashParts[1]);
+    
+    if (monthAlt >= 1 && monthAlt <= 12 && dayAlt >= 1 && dayAlt <= 31) {
+      date = new Date(year, monthAlt - 1, dayAlt);
+      if (!isNaN(date)) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+  }
+  
+  // If all parsing fails, return the original string
+  return dateStr;
+}
+
+// Simple function to extract basic event information from emails without using AI
+function createBasicEventsFromEmails(emails) {
+  console.log("🔍 Creating basic events from email content");
+  const events = [];
+  const dateRegex = /(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/g;
+  const timeRegex = /(\d{1,2}[:\.]\d{2}\s*(am|pm|AM|PM)?)/g;
+  
+  emails.forEach((email, emailIndex) => {
+    const snippet = email.snippet || "";
+    
+    // Skip if snippet is too short
+    if (snippet.length < 10) return;
+    
+    // Look for dates in the snippet
+    const dateMatches = snippet.match(dateRegex);
+    if (dateMatches) {
+      dateMatches.forEach((dateMatch, index) => {
+        // Try to find a time near this date
+        const timeMatches = snippet.match(timeRegex);
+        const time = timeMatches && timeMatches.length > index ? timeMatches[index] : null;
+        
+        // Create a standardized date format (YYYY-MM-DD)
+        const standardDate = standardizeDate(dateMatch);
+        
+        // Create a title from the words before and after the date
+        const words = snippet.split(/\s+/);
+        const datePosition = words.findIndex(word => word.includes(dateMatch));
+        const titleStart = Math.max(0, datePosition - 3);
+        const titleEnd = Math.min(words.length, datePosition + 4);
+        const title = words.slice(titleStart, titleEnd).join(" ").replace(/[^\w\s]/g, "");
+        
+        events.push({
+          id: `event_${Date.now()}_${emailIndex}_${index}`,
+          title: title || "Event from email",
+          date: standardDate,
+          time: time || "",
+          location: "",
+          description: snippet.substring(0, 100) + "...",
+          timestamp: Date.now(),
+          eventDate: new Date(standardDate).getTime() || Date.now(),
+          added: false,
+          sourceEmailId: email.id
+        });
+      });
+    }
+  });
+  
+  // Store these basic events in Chrome Storage
+  if (events.length > 0) {
+    chrome.storage.local.set({ events: events });
   }
   
   return events;
@@ -251,7 +388,14 @@ function extractEventsFromText(text) {
 // Store events in cache
 async function storeEventsInCache(events) {
   try {
+    // First ensure we have initialization
     const db = await initSummaryDB();
+    
+    // Make sure the events store exists
+    if (!db.objectStoreNames.contains('events')) {
+      throw new Error("Events store not found in IndexedDB");
+    }
+    
     const transaction = db.transaction(['events'], 'readwrite');
     const eventStore = transaction.objectStore('events');
     
@@ -276,6 +420,8 @@ async function storeEventsInCache(events) {
     });
   } catch (error) {
     console.error("❌ Error in storeEventsInCache:", error);
+    // Store in Chrome Storage as fallback
+    chrome.storage.local.set({ events: events });
   }
 }
 
@@ -290,11 +436,19 @@ async function getEventsFromCache() {
     });
     
     if (storageResult && storageResult.length > 0) {
+      console.log("🎯 Using events from Chrome Storage");
       return storageResult;
     }
     
     // If not in Chrome Storage, check IndexedDB
     const db = await initSummaryDB();
+    
+    // Make sure the events store exists
+    if (!db.objectStoreNames.contains('events')) {
+      console.warn("⚠️ Events store not found in IndexedDB");
+      return [];
+    }
+    
     const transaction = db.transaction(['events'], 'readonly');
     const eventStore = transaction.objectStore('events');
     
@@ -324,6 +478,7 @@ async function getEventsFromCache() {
     });
   } catch (error) {
     console.error("❌ Error in getEventsFromCache:", error);
+    // Return empty array if we hit an error
     return [];
   }
 }

@@ -104,6 +104,35 @@ document.addEventListener('DOMContentLoaded', function() {
             calendarEvents.innerHTML = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
         }
         
+        // Check if we're in rate limited mode
+        chrome.storage.local.get(['gemini_rate_limited'], function(data) {
+            if (data.gemini_rate_limited) {
+                const rateLimitTime = new Date(data.gemini_rate_limited);
+                const now = new Date();
+                const minutesAgo = Math.floor((now - rateLimitTime) / (1000 * 60));
+                
+                if (minutesAgo < 60) { // Less than an hour ago
+                    // Add a small note about limited features
+                    const note = document.createElement('div');
+                    note.className = 'api-limit-note';
+                    note.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <span>Using basic event detection (API quota reached)</span>
+                    `;
+                    
+                    // Insert after the header
+                    const header = document.querySelector('.calendar-events-section h3');
+                    if (header && !document.querySelector('.api-limit-note')) {
+                        header.parentNode.insertBefore(note, header.nextSibling);
+                    }
+                }
+            }
+        });
+        
         // Request event extraction from background script
         chrome.runtime.sendMessage(
             {action: "extractEvents"},
@@ -129,21 +158,41 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Create HTML for each event
         events.forEach(event => {
+            // Skip invalid events
+            if (!event.date) {
+                console.warn("Skipping event without date:", event);
+                return;
+            }
+            
             const eventElement = document.createElement('div');
             eventElement.className = `event-item${event.added ? ' added' : ''}`;
             eventElement.setAttribute('data-event-id', event.id);
             
             // Format date for display
-            const eventDate = new Date(event.date);
-            const formattedDate = eventDate.toLocaleDateString(undefined, {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-            });
+            let formattedDate = "Unknown Date";
+            try {
+                const eventDate = new Date(event.date);
+                if (!isNaN(eventDate.getTime())) {
+                    formattedDate = eventDate.toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                    });
+                } else {
+                    // If standard date parsing fails, show the original format
+                    formattedDate = event.date;
+                }
+            } catch (error) {
+                console.warn("Error formatting date:", error);
+                formattedDate = event.date || "Unknown Date";
+            }
+            
+            // Title fallback
+            const title = event.title || "Untitled Event";
             
             // Create HTML structure for the event
             eventElement.innerHTML = `
-                <div class="event-title">${event.title}</div>
+                <div class="event-title">${title}</div>
                 <div class="event-info">
                     <div class="event-date">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -174,21 +223,32 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 ` : ''}
                 ${event.description ? `<div class="event-description">${event.description}</div>` : ''}
-                ${event.added ? `
-                <div class="event-added-badge">Added to Calendar</div>
-                ` : `
-                <button class="add-to-calendar" data-event-id="${event.id}">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6"></path>
-                        <path d="M3 10h18"></path>
-                        <path d="M16 2v4"></path>
-                        <path d="M8 2v4"></path>
-                        <path d="M12 14v4"></path>
-                        <path d="M10 16h4"></path>
-                    </svg>
-                    Add to Calendar
-                </button>
-                `}
+                <div class="event-actions">
+                    ${event.added ? `
+                    <div class="event-added-badge">Added to Calendar</div>
+                    ` : `
+                    <button class="add-to-calendar" data-event-id="${event.id}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6"></path>
+                            <path d="M3 10h18"></path>
+                            <path d="M16 2v4"></path>
+                            <path d="M8 2v4"></path>
+                            <path d="M12 14v4"></path>
+                            <path d="M10 16h4"></path>
+                        </svg>
+                        Add to Calendar
+                    </button>
+                    `}
+                    ${event.sourceEmailId ? `
+                    <button class="show-email" data-email-id="${event.sourceEmailId}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                            <polyline points="22,6 12,13 2,6"></polyline>
+                        </svg>
+                        Show Email
+                    </button>
+                    ` : ''}
+                </div>
             `;
             
             calendarEvents.appendChild(eventElement);
@@ -200,6 +260,15 @@ document.addEventListener('DOMContentLoaded', function() {
             button.addEventListener('click', function(e) {
                 const eventId = e.currentTarget.getAttribute('data-event-id');
                 addEventToCalendar(eventId, events);
+            });
+        });
+        
+        // Add event listeners to the "Show Email" buttons
+        const showEmailButtons = calendarEvents.querySelectorAll('.show-email');
+        showEmailButtons.forEach(button => {
+            button.addEventListener('click', function(e) {
+                const emailId = e.currentTarget.getAttribute('data-email-id');
+                openEmailInGmail(emailId);
             });
         });
     }
@@ -263,6 +332,48 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         );
+    }
+
+    // Function to open the source email in Gmail
+    function openEmailInGmail(emailId) {
+        if (!emailId) {
+            addMessageToChat("Sorry, I couldn't find the source email for this event.", 'bot');
+            return;
+        }
+        
+        // Construct Gmail URL for the specific email
+        const gmailUrl = `https://mail.google.com/mail/u/0/#inbox/${emailId}`;
+        
+        // Check if we have tabs permission
+        chrome.permissions.contains({ permissions: ['tabs'] }, function(hasPermission) {
+            if (hasPermission) {
+                // Open in a new tab
+                chrome.tabs.create({ url: gmailUrl });
+                
+                // Add a message to the chat
+                addMessageToChat("I've opened the source email in a new tab.", 'bot');
+            } else {
+                // If we don't have permission, notify user and provide link
+                const linkElement = document.createElement('a');
+                linkElement.href = gmailUrl;
+                linkElement.target = '_blank';
+                linkElement.textContent = 'Open Email in Gmail';
+                linkElement.className = 'email-link';
+                
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message bot';
+                messageDiv.textContent = "Click this link to view the email: ";
+                messageDiv.appendChild(linkElement);
+                
+                document.getElementById('chatbox').appendChild(messageDiv);
+                
+                // Scroll to bottom with smooth animation
+                chatbox.scrollTo({
+                    top: chatbox.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        });
     }
 
     // Set up event listeners for email filtering

@@ -8,7 +8,9 @@
         "identity",
         "identity.email",
         "storage",
-        "scripting"
+        "scripting",
+        "tabs"
+        
     ],
     "host_permissions": [
         "https://www.googleapis.com/",
