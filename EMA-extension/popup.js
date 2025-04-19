@@ -704,12 +704,13 @@ openEmailsPageBtn.style.display = "none";
 
 
 
-        fetchedEmailsContainer.innerHTML = "";
+        //fetchedEmailsContainer.innerHTML = "";
   
         for (let i = 0; i < emails.length; i++) {
           const email = emails[i];
           const subject = email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
           const from = email.from || "Unknown";
+          const sender = from.includes("@") ? from.split("@")[0] : from;
           const prompt = ` Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${email.snippet || "No body"}`;
   
           const summary = await summarizeWithGemini(prompt);
@@ -728,12 +729,13 @@ openEmailsPageBtn.style.display = "none";
           card.innerHTML = `
   <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
     <span style="background: #d3e5ef; color: #333; padding: 2px 8px; border-radius: 6px; font-weight: bold;">General</span>
-    <span style="color: #555; font-weight: bold;">${from.includes("@") ? from.split("@")[1].split(".")[0] : from}</span>
+    <span style="color: #555; font-weight: bold;">${sender}</span>
   </div>
   <div style="margin-bottom: 8px;">
     <strong>Summary:</strong> ${summary || "No summary generated."}
   </div>
 `;
+
 
           fetchedEmailsContainer.appendChild(card);
         }

@@ -562,7 +562,14 @@
         <p class="summary-placeholder">Loading your email summary...</p>
       </div>
     </div>
-    <div id="fetched-emails" style="margin-top: 20px;"></div>
+    <!-- Scrollable Fetched Emails Box -->
+<div class="calendar-events-section" style="margin-top: 20px;">
+  <h3>Fetched Emails</h3>
+  <div id="fetched-emails" class="calendar-events-content" style="max-height: 250px; overflow-y: auto;">
+    <p class="events-placeholder">No emails fetched yet.</p>
+  </div>
+</div>
+
     <!-- Fetch All Emails Page Button -->
 <div style="text-align: center; margin-top: 10px;">
   <button id="open-emails-page" style="
