@@ -289,6 +289,41 @@ function standardizeDate(dateStr) {
   // Try different date formats
   let date;
   
+  // Get current year for dates without a year
+  const currentYear = new Date().getFullYear();
+  
+  // Check for date formats with only month and day (MM/DD or DD/MM)
+  const monthDayRegex = /^(\d{1,2})[\/.-](\d{1,2})$/;
+  if (monthDayRegex.test(dateStr)) {
+    const [_, first, second] = dateStr.match(monthDayRegex);
+    
+    // Try as MM/DD first
+    const month = parseInt(first);
+    const day = parseInt(second);
+    
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      date = new Date(currentYear, month - 1, day);
+      if (!isNaN(date)) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+    
+    // Try as DD/MM
+    const dayAlt = parseInt(first);
+    const monthAlt = parseInt(second);
+    
+    if (monthAlt >= 1 && monthAlt <= 12 && dayAlt >= 1 && dayAlt <= 31) {
+      date = new Date(currentYear, monthAlt - 1, dayAlt);
+      if (!isNaN(date)) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+    
+    // If we get here, neither MM/DD nor DD/MM worked with valid values
+    // Assume it's MM/DD regardless and let JavaScript handle it
+    return new Date(currentYear, first - 1, second).toISOString().split('T')[0];
+  }
+  
   // Try direct parsing first
   date = new Date(dateStr);
   if (!isNaN(date)) {
@@ -485,9 +520,195 @@ async function getEventsFromCache() {
   }
 }
 
+// Fetch events from Google Calendar
+async function fetchCalendarEvents(token, timeMin, timeMax) {
+  try {
+    // Default time range: 7 days before and after current date if not specified
+    const currentDate = new Date();
+    if (!timeMin) {
+      const sevenDaysAgo = new Date(currentDate);
+      sevenDaysAgo.setDate(currentDate.getDate() - 7);
+      timeMin = sevenDaysAgo.toISOString();
+    }
+    if (!timeMax) {
+      const sevenDaysLater = new Date(currentDate);
+      sevenDaysLater.setDate(currentDate.getDate() + 30);
+      timeMax = sevenDaysLater.toISOString();
+    }
+
+    console.log("🔍 Fetching calendar events from", timeMin, "to", timeMax);
+
+    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    url.searchParams.append('timeMin', timeMin);
+    url.searchParams.append('timeMax', timeMax);
+    url.searchParams.append('singleEvents', 'true');
+    url.searchParams.append('orderBy', 'startTime');
+    url.searchParams.append('maxResults', '100');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("❌ Error fetching calendar events:", errorData);
+      throw new Error(errorData.error?.message || 'Failed to fetch calendar events');
+    }
+
+    const data = await response.json();
+    console.log(`✅ Retrieved ${data.items?.length || 0} calendar events`);
+    return data.items || [];
+  } catch (error) {
+    console.error("❌ Error in fetchCalendarEvents:", error);
+    throw error;
+  }
+}
+
+// Check if an event exists in Google Calendar
+async function verifyEventInCalendar(token, event) {
+  try {
+    // Get the date of the event to search
+    const eventDate = new Date(event.date);
+    if (isNaN(eventDate.getTime())) {
+      console.error("❌ Invalid event date:", event.date);
+      return false;
+    }
+
+    // Set time range to search (the day of the event)
+    const startOfDay = new Date(eventDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(eventDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Fetch calendar events for this day
+    const calendarEvents = await fetchCalendarEvents(
+      token, 
+      startOfDay.toISOString(), 
+      endOfDay.toISOString()
+    );
+
+    // Check if any event matches our event
+    const eventExists = calendarEvents.some(calEvent => {
+      // Compare event titles (summary in Google Calendar)
+      const titleMatch = calEvent.summary?.toLowerCase() === event.title.toLowerCase();
+      
+      // Compare dates
+      let dateMatch = false;
+      if (calEvent.start?.dateTime) {
+        const calEventDate = new Date(calEvent.start.dateTime);
+        dateMatch = calEventDate.toDateString() === eventDate.toDateString();
+      } else if (calEvent.start?.date) {
+        const calEventDate = new Date(calEvent.start.date);
+        dateMatch = calEventDate.toDateString() === eventDate.toDateString();
+      }
+      
+      // Return true if both title and date match
+      return titleMatch && dateMatch;
+    });
+
+    console.log(`🔍 Event "${event.title}" on ${event.date} ${eventExists ? 'found' : 'not found'} in calendar`);
+    
+    // If the event was previously marked as added but is no longer in calendar, update it
+    if (!eventExists && event.added) {
+      console.log(`⚠️ Event "${event.title}" was marked as added but not found in calendar - resetting status`);
+      await markEventAsNotAdded(event.id);
+    }
+    
+    return eventExists;
+  } catch (error) {
+    console.error("❌ Error verifying event in calendar:", error);
+    return false;
+  }
+}
+
+// Mark an event as not added in the cache
+async function markEventAsNotAdded(eventId) {
+  try {
+    console.log("Marking event as not added:", eventId);
+    
+    // Update in Chrome storage first
+    const storageResult = await new Promise((resolve) => {
+      chrome.storage.local.get(['events'], function(result) {
+        const events = result.events || [];
+        let eventFound = false;
+        
+        const updatedEvents = events.map(event => {
+          if (event.id === eventId) {
+            eventFound = true;
+            return { ...event, added: false };
+          }
+          return event;
+        });
+        
+        if (eventFound) {
+          chrome.storage.local.set({ events: updatedEvents }, () => {
+            console.log("✅ Updated event status in Chrome storage");
+            resolve(true);
+          });
+        } else {
+          console.warn("⚠️ Event not found in Chrome storage:", eventId);
+          resolve(false);
+        }
+      });
+    });
+    
+    // Update in IndexedDB
+    try {
+      const db = await initSummaryDB();
+      const transaction = db.transaction(['events'], 'readwrite');
+      const eventStore = transaction.objectStore('events');
+      
+      return new Promise((resolve, reject) => {
+        const request = eventStore.get(eventId);
+        
+        request.onsuccess = function(event) {
+          const eventData = event.target.result;
+          if (eventData) {
+            eventData.added = false;
+            eventStore.put(eventData);
+            console.log("✅ Updated event status in IndexedDB");
+          } else {
+            console.warn("⚠️ Event not found in IndexedDB:", eventId);
+          }
+        };
+        
+        transaction.oncomplete = function() {
+          resolve(true);
+        };
+        
+        transaction.onerror = function(event) {
+          console.error("❌ IndexedDB error:", event.target.error);
+          reject(event.target.error);
+        };
+      });
+    } catch (dbError) {
+      console.error("❌ Error updating event in IndexedDB:", dbError);
+      // Continue even if IndexedDB fails, as we've already updated Chrome storage
+      return storageResult;
+    }
+  } catch (error) {
+    console.error("❌ Error marking event as not added:", error);
+    throw error;
+  }
+}
+
 // Add event to Google Calendar
 async function addEventToCalendar(token, event) {
   try {
+    // First, verify if the event already exists in the calendar
+    const eventExists = await verifyEventInCalendar(token, event);
+    if (eventExists) {
+      console.log("✅ Event already exists in calendar:", event.title);
+      // Mark as added in our system
+      await markEventAsAdded(event.id);
+      return { id: "existing-event", exists: true };
+    }
+
     // Format the event for Google Calendar API
     const calendarEvent = {
       'summary': event.title,
@@ -546,48 +767,71 @@ async function addEventToCalendar(token, event) {
 // Mark an event as added in the cache
 async function markEventAsAdded(eventId) {
   try {
+    console.log("Marking event as added:", eventId);
+    
     // Update in Chrome storage first
     const storageResult = await new Promise((resolve) => {
       chrome.storage.local.get(['events'], function(result) {
         const events = result.events || [];
+        let eventFound = false;
+        
         const updatedEvents = events.map(event => {
           if (event.id === eventId) {
+            eventFound = true;
             return { ...event, added: true };
           }
           return event;
         });
-        chrome.storage.local.set({ events: updatedEvents }, () => {
-          resolve(true);
-        });
+        
+        if (eventFound) {
+          chrome.storage.local.set({ events: updatedEvents }, () => {
+            console.log("✅ Updated event in Chrome storage");
+            resolve(true);
+          });
+        } else {
+          console.warn("⚠️ Event not found in Chrome storage:", eventId);
+          resolve(false);
+        }
       });
     });
     
     // Update in IndexedDB
-    const db = await initSummaryDB();
-    const transaction = db.transaction(['events'], 'readwrite');
-    const eventStore = transaction.objectStore('events');
-    
-    return new Promise((resolve, reject) => {
-      const request = eventStore.get(eventId);
+    try {
+      const db = await initSummaryDB();
+      const transaction = db.transaction(['events'], 'readwrite');
+      const eventStore = transaction.objectStore('events');
       
-      request.onsuccess = function(event) {
-        const eventData = event.target.result;
-        if (eventData) {
-          eventData.added = true;
-          eventStore.put(eventData);
-        }
-      };
-      
-      transaction.oncomplete = function() {
-        resolve(true);
-      };
-      
-      transaction.onerror = function(event) {
-        reject(event.target.error);
-      };
-    });
+      return new Promise((resolve, reject) => {
+        const request = eventStore.get(eventId);
+        
+        request.onsuccess = function(event) {
+          const eventData = event.target.result;
+          if (eventData) {
+            eventData.added = true;
+            eventStore.put(eventData);
+            console.log("✅ Updated event in IndexedDB");
+          } else {
+            console.warn("⚠️ Event not found in IndexedDB:", eventId);
+          }
+        };
+        
+        transaction.oncomplete = function() {
+          resolve(true);
+        };
+        
+        transaction.onerror = function(event) {
+          console.error("❌ IndexedDB error:", event.target.error);
+          reject(event.target.error);
+        };
+      });
+    } catch (dbError) {
+      console.error("❌ Error updating event in IndexedDB:", dbError);
+      // Continue even if IndexedDB fails, as we've already updated Chrome storage
+      return storageResult;
+    }
   } catch (error) {
     console.error("❌ Error marking event as added:", error);
+    throw error;
   }
 }
 
@@ -1070,10 +1314,9 @@ function getSummary() {
 // Call this function when you want to retrieve the summary
 getSummary();
 
-// Add this to your existing background.js
-chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
+// Main message listener
+chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.action === "getEmails") {
-        // Get the filter from the request
         const filter = request.filter || '10';
         
         // Authenticate and fetch emails with the filter
@@ -1101,78 +1344,21 @@ chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
                 
                 // Send the emails and events back to the popup
                 sendResponse({
-                  emails: validEmails || [],
-                  events: events || []
+                    emails: validEmails || [],
+                    events: events || []
                 });
             } catch (error) {
                 console.error("❌ Error processing emails:", error);
                 sendResponse({
-                  emails: [],
-                  events: []
+                    error: "Failed to fetch emails. Please try again.",
+                    emails: [],
+                    events: []
                 });
             }
         });
+        
         return true; // Required for async response
     }
-    async function summarizeSingleEmail(prompt) {
-      const GEMINI_API_KEY = "YOUR_ACTUAL_API_KEY_HERE"; // Replace this securely
-    
-      const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-      const requestBody = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 120,
-          topP: 0.8,
-          topK: 40
-        }
-      };
-    
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody)
-        });
-    
-        const data = await response.json();
-        if (!response.ok || data.error) {
-          console.error("Gemini summary error:", data.error?.message || "Unknown error");
-          return null;
-        }
-    
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-      } catch (error) {
-        console.error("Error calling Gemini:", error);
-        return null;
-      }
-    }
-    
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === "summarizeEachEmail") {
-        (async () => {
-          const emails = request.emails || [];
-    
-          console.log("📄 Emails to summarize:", emails);
-    
-          const summarizedEmails = await Promise.all(
-            emails.map(async (email) => {
-              const prompt = `Summarize the following email:\n\nSubject: ${email.subject || ''}\nFrom: ${email.from || ''}\n\n${email.body || email.snippet || ''}`;
-              const summary = await summarizeSingleEmail(prompt);
-              return {
-                ...email,
-                summary: summary || "No summary generated.",
-              };
-            })
-          );
-    
-          sendResponse({ emailsWithSummaries: summarizedEmails });
-        })(); // ← run async IIFE
-    
-        return true; // Required for async sendResponse
-      }
-    });
-    
     
     if (request.action === "summarizeEmails") {
         // Get emails from the request
@@ -1203,6 +1389,36 @@ chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
         return true; // Required for async response
     }
     
+    if (request.action === "syncCalendarEvents") {
+        // Authenticate and sync calendar events
+        authenticateUser(async function(token) {
+            try {
+                // Perform calendar sync
+                const result = await syncCalendarEvents(token);
+                
+                // Reload events after sync
+                chrome.storage.local.get(['emails'], async function(result) {
+                    const emails = result.emails || [];
+                    const updatedEvents = await getEventsFromCache();
+                    
+                    sendResponse({
+                        success: true,
+                        syncedCount: result.synced,
+                        events: updatedEvents
+                    });
+                });
+            } catch (error) {
+                console.error("❌ Error syncing calendar events:", error);
+                sendResponse({
+                    success: false,
+                    error: "Failed to sync with Google Calendar."
+                });
+            }
+        });
+        
+        return true; // Required for async response
+    }
+    
     if (request.action === "addToCalendar") {
         // Get the event data from the request
         const eventData = request.event;
@@ -1218,7 +1434,8 @@ chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
                 const result = await addEventToCalendar(token, eventData);
                 sendResponse({
                     success: true,
-                    eventId: result.id
+                    eventId: result.id,
+                    exists: result.exists || false
                 });
             } catch (error) {
                 console.error("❌ Error adding event to calendar:", error);
@@ -1242,7 +1459,8 @@ chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
                             const result = await addEventToCalendar(newToken, eventData);
                             sendResponse({
                                 success: true,
-                                eventId: result.id
+                                eventId: result.id,
+                                exists: result.exists || false
                             });
                         } catch (retryError) {
                             sendResponse({
@@ -1254,204 +1472,199 @@ chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
                 } else {
                     sendResponse({
                         success: false,
-                        error: error.message
+                        error: error.message || "Unknown error adding event to calendar"
                     });
                 }
             }
         });
+        
         return true; // Required for async response
     }
-
     
-  if (request.action === "processMessage") {
-    (async () => {
-      const result = await new Promise(resolve => {
-        chrome.storage.local.get(['pendingEmail'], resolve);
-      });
-      
-        const contacts = await new Promise(resolve => {
-        chrome.storage.local.get(['knownContacts'], async result => {
-          resolve(result.knownContacts || []);
-          
-          const userMessage = request.message.toLowerCase();
-          // ✅ Handle YES: send immediately
-          if (userMessage === "yes" && result.pendingEmail) {
-            const { to, subject, body } = result.pendingEmail;
-        
-            if (!to || !subject || !body) {
-              sendResponse({ reply: "⚠️ Sorry, I don't have a complete email to send. Try again with more context." });
-              return;
-            }
-        
-            authenticateUser(async (token) => {
-              try {
-                await sendEmail(token, to, subject, body);
-                chrome.storage.local.remove('pendingEmail');
-                sendResponse({ reply: `✅ Email sent to ${to}. What else can I help you with?` });
-              } catch (err) {
-                sendResponse({ reply: "❌ Failed to send the email. Please try again." });
-              }
+    if (request.action === "processMessage") {
+        (async () => {
+            // Get both pendingEmail and contacts in one go
+            const storage = await new Promise(resolve => {
+                chrome.storage.local.get(['pendingEmail', 'knownContacts'], resolve);
             });
-        
-            return;
-          }
-        
-          // ✅ Handle NO: cancel
-          if (userMessage === "no" && result.pendingEmail) {
-            chrome.storage.local.remove('pendingEmail');
-            sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
-            return;
-          }
-
-          // Check if the user specifically wants to send an email
-          const isEmailRequest = /send\s+(an|a)\s+email|write\s+(an|a)\s+email|email\s+to|compose\s+(an|a)\s+email|draft\s+(an|a)\s+email/i.test(request.message);
-          
-          // If not an email request, process as normal conversation
-          if (!isEmailRequest) {
-            // Create a conversational prompt that handles English and Arabizi
-            const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
-            You have access to the user's recent emails and can help answer questions about them.
-            Your goal is to help the user understand, organize, and act on their emails. 
-            When the user asks you a question, you may search the full text of any email, identify relevant senders, dates, attachments and threads, and deliver clear, concise, human‑friendly answers. 
-            Your job is to answer questions about their email quickly and with minimal back‑and‑forth. When the user asks for something—like “emails with deadlines”—you should assume reasonable defaults (e.g. upcoming due dates in the next 7 days), immediately scan all messages for date‑keywords (“due,” “deadline,” calendar dates), and return a concise list of matches showing subject, sender, and deadline date. Only ask a follow‑up question if you absolutely cannot find or interpret any results. When drafting your reply, lead with the answer, then offer more detail (“Would you like me to filter by sender or topic?”) only if the user asks for it.
-            your only source of information is the emails you have access to.
-            You can summarize long conversations, extract key action items or deadlines, surface unanswered requests, suggest email replies tailored to the user’s tone and intent, classify messages by topic or priority, and flag potential scheduling needs. 
-            Always respect the user’s privacy and only access emails when the user explicitly asks. If you need clarification before answering, ask follow‑up questions. When drafting a reply, match the user’s style, use proper greetings and sign‑offs, and keep each message brief unless they ask for more detail. 
-            Above all, be accurate, helpful, and mindful that you’re operating on the user’s personal correspondence.
-
             
-            Context:
-            The user message is not asking to send an email. This is just a normal conversation.
+            const pendingEmail = storage.pendingEmail;
+            const contacts = storage.knownContacts || [];
             
-            User message: ${request.message}`;
+            const userMessage = request.message.toLowerCase();
             
-            // First check cache before calling API
-            const cacheKey = `chat_${generateEmailContentHash([{snippet: request.message}])}`;
-            const cachedResponse = await getCachedItem(cacheKey);
+            // ✅ Handle YES: send immediately
+            if (userMessage === "yes" && pendingEmail) {
+                const { to, subject, body } = pendingEmail;
             
-            if (cachedResponse) {
-                console.log("🎯 Using cached chat response");
-                sendResponse({reply: cachedResponse});
+                if (!to || !subject || !body) {
+                    sendResponse({ reply: "⚠️ Sorry, I don't have a complete email to send. Try again with more context." });
+                    return;
+                }
+            
+                authenticateUser(async (token) => {
+                    try {
+                        await sendEmail(token, to, subject, body);
+                        chrome.storage.local.remove('pendingEmail');
+                        sendResponse({ reply: `✅ Email sent to ${to}. What else can I help you with?` });
+                    } catch (err) {
+                        sendResponse({ reply: "❌ Failed to send the email. Please try again." });
+                    }
+                });
+            
                 return;
             }
             
-            // No cache hit, call Gemini API
-            const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
-            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+            // ✅ Handle NO: cancel
+            if (userMessage === "no" && pendingEmail) {
+                chrome.storage.local.remove('pendingEmail');
+                sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
+                return;
+            }
+
+            // Check if the user specifically wants to send an email
+            const isEmailRequest = /send\s+(an|a)\s+email|write\s+(an|a)\s+email|email\s+to|compose\s+(an|a)\s+email|draft\s+(an|a)\s+email/i.test(request.message);
             
-            const requestBody = {
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.7,
-                    topP: 0.8,
-                    topK: 40
-                }
-            };
-            
-            try {
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(requestBody)
-                });
+            // If not an email request, process as normal conversation
+            if (!isEmailRequest) {
+                // Create a conversational prompt that handles English and Arabizi
+                const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
+                You can understand both English and Arabic written in English letters (Arabizi/Franco-Arab).
+
+                Important language rules:
+                - Keep responses friendly and natural in the appropriate language
+                - Keep all email analysis functionality working as normal
                 
-                const data = await response.json();
+                Context:
+                The user message is not asking to send an email. This is just a normal conversation.
                 
-                if (!response.ok || data.error) {
-                    console.error("Error processing message:", data?.error?.message || "Unknown error");
-                    sendResponse({reply: "Sorry, I encountered an error. Please try again."});
+                User message: ${request.message}`;
+                
+                // First check cache before calling API
+                const cacheKey = `chat_${generateEmailContentHash([{snippet: request.message}])}`;
+                const cachedResponse = await getCachedItem(cacheKey);
+                
+                if (cachedResponse) {
+                    console.log("🎯 Using cached chat response");
+                    sendResponse({reply: cachedResponse});
                     return;
                 }
                 
-                const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 
-                             "I couldn't process that. Please try again.";
+                // No cache hit, call Gemini API
+                const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+                const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
                 
-                // Cache the response
-                await storeCachedItem(cacheKey, reply);
+                const requestBody = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        temperature: 0.7,
+                        topP: 0.8,
+                        topK: 40
+                    }
+                };
                 
-                sendResponse({reply: reply});
-            } catch (error) {
-                console.error("Error in message processing:", error);
-                sendResponse({reply: "Sorry, I encountered an error processing your message."});
+                try {
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(requestBody)
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok || data.error) {
+                        console.error("Error processing message:", data?.error?.message || "Unknown error");
+                        sendResponse({reply: "Sorry, I encountered an error. Please try again."});
+                        return;
+                    }
+                    
+                    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 
+                                 "I couldn't process that. Please try again.";
+                    
+                    // Cache the response
+                    await storeCachedItem(cacheKey, reply);
+                    
+                    sendResponse({reply: reply});
+                } catch (error) {
+                    console.error("Error in message processing:", error);
+                    sendResponse({reply: "Sorry, I encountered an error processing your message."});
+                }
+                return;
             }
-            return;
-          }
-           
-           // Continue with the email processing ONLY if it's an email request
-           let contactLines = "";
+            
+            // Continue with the email processing ONLY if it's an email request
+            let contactLines = "";
 
-           if (Array.isArray(contacts) && contacts.length > 0) {
-             contactLines = contacts.map(([name, email]) => `- ${name}: ${email}`).join('\n');
-           } else {
-             contactLines = "- someone@example.com";
-           }
-      
-           // ✅ Generate email from freeform input using Gemini
-           const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
-           const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-           
-           const prompt = `
-           You are an email assistant. You MUST generate a professional email based on the user's request.
-           
-           1. ONLY use the contacts listed below.
-           2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email  "
-           3. The subject and body should directly reflect what the user asked.
-           4. the email should be professional and well written, and a proper length.
-           5. sign it with the users name from the email that you are sending from.(do not write sent from)
-           6. Follow this format exactly:
-           
-           To: [recipient@example.com]  
-           Subject: [email subject]  
-           Body:  
-           [email message]
-           
-           Known contacts:
-           ${contactLines}
-           
-           User said: "${request.message}"
-           `;
-           
-           try {
-             const res = await fetch(url, {
-               method: "POST",
-               headers: { "Content-Type": "application/json" },
-               body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-             });
-       
-             const data = await res.json();
-             const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
-       
-             const toMatch = text.match(/To:\s*(.*)/i);
-             const subjectMatch = text.match(/Subject:\s*(.*)/i);
-             const bodyMatch = text.match(/Body:\s*([\s\S]*)/i);
-             
-             if (!toMatch || !subjectMatch || !bodyMatch) {
-               sendResponse({ reply: "❌ I couldn't generate a complete email. Please rephrase your request or provide more details." });
-               return;
-             }
-             
-             const to = toMatch[1].trim();
-             const subject = subjectMatch[1].trim();
-             const body = bodyMatch[1].trim();
-             
-       
-             chrome.storage.local.set({
-               pendingEmail: { to, subject, body }
-             });
-       
-             sendResponse({
-               reply: `Here's your email:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`
-             });
-           } catch (err) {
-             console.error("❌ Gemini error:", err);
-             sendResponse({ reply: "❌ Error generating the email. Try again later." });
-           }
-        });
-      });
-    })();
-  
-    return true;
-  }
+            if (Array.isArray(contacts) && contacts.length > 0) {
+                contactLines = contacts.map(([name, email]) => `- ${name}: ${email}`).join('\n');
+            } else {
+                contactLines = "- someone@example.com";
+            }
+        
+            // ✅ Generate email from freeform input using Gemini
+            const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+            
+            const prompt = `
+            You are an email assistant. You MUST generate a professional email based on the user's request.
+            
+            1. ONLY use the contacts listed below.
+            2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email  "
+            3. The subject and body should directly reflect what the user asked.
+            4. the email should be professional and well written, and a proper length.
+            5. sign it with the users name from the email that you are sending from.(do not write sent from)
+            6. Follow this format exactly:
+            
+            To: [recipient@example.com]  
+            Subject: [email subject]  
+            Body:  
+            [email message]
+            
+            Known contacts:
+            ${contactLines}
+            
+            User said: "${request.message}"
+            `;
+            
+            try {
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+        
+                const data = await res.json();
+                const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
+        
+                const toMatch = text.match(/To:\s*(.*)/i);
+                const subjectMatch = text.match(/Subject:\s*(.*)/i);
+                const bodyMatch = text.match(/Body:\s*([\s\S]*)/i);
+                
+                if (!toMatch || !subjectMatch || !bodyMatch) {
+                    sendResponse({ reply: "❌ I couldn't generate a complete email. Please rephrase your request or provide more details." });
+                    return;
+                }
+                
+                const to = toMatch[1].trim();
+                const subject = subjectMatch[1].trim();
+                const body = bodyMatch[1].trim();
+                
+        
+                chrome.storage.local.set({
+                    pendingEmail: { to, subject, body }
+                });
+        
+                sendResponse({
+                    reply: `Here's your email:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`
+                });
+            } catch (err) {
+                console.error("❌ Gemini error:", err);
+                sendResponse({ reply: "❌ Error generating the email. Try again later." });
+            }
+        })();
+        
+        return true;
+    }
 });
    
 // Helper functions for the chat cache
@@ -1469,119 +1682,160 @@ async function storeCachedItem(key, value) {
     });
 }
 async function sendEmail(token, to, subject, message) {
-  const email = 
-    `To: ${to}\r\n` +
-    `Subject: ${subject}\r\n` +
-    `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
-    `${message}`;
+    const email = 
+        `To: ${to}\r\n` +
+        `Subject: ${subject}\r\n` +
+        `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
+        `${message}`;
 
-  const encodedMessage = btoa(unescape(encodeURIComponent(email)))
-    .replace(/\+/g, '-').replace(/\//g, '_');
+    const encodedMessage = btoa(unescape(encodeURIComponent(email)))
+        .replace(/\+/g, '-').replace(/\//g, '_');
 
-  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ raw: encodedMessage })
-  });
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ raw: encodedMessage })
+    });
 
-  const data = await res.json();
-  return data;
+    const data = await res.json();
+    return data;
 }
 
 // Force re-authentication by removing tokens and getting a fresh one
 function forceReauthenticate(callback) {
-  console.log("🔄 Forcing re-authentication...");
-  
-  // First clear any cached tokens
-  chrome.identity.clearAllCachedAuthTokens(() => {
-    console.log("🧹 Cleared all cached auth tokens");
+    console.log("🔄 Forcing re-authentication...");
     
-    // Now request a new token with all required scopes
-    chrome.identity.getAuthToken({ 
-      interactive: true,
-      scopes: [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/calendar.events"
-      ]
-    }, function (token) {
-      if (chrome.runtime.lastError) {
-        console.error("❌ Re-authentication failed:", chrome.runtime.lastError);
-        if (callback) callback(null);
-        return;
-      }
-      
-      console.log("✅ Re-authentication successful");
-      if (callback) callback(token);
+    // First clear any cached tokens
+    chrome.identity.clearAllCachedAuthTokens(() => {
+        console.log("🧹 Cleared all cached auth tokens");
+        
+        // Now request a new token with all required scopes
+        chrome.identity.getAuthToken({ 
+            interactive: true,
+            scopes: [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/calendar.events"
+            ]
+        }, function (token) {
+            if (chrome.runtime.lastError) {
+                console.error("❌ Re-authentication failed:", chrome.runtime.lastError);
+                if (callback) callback(null);
+                return;
+            }
+            
+            console.log("✅ Re-authentication successful");
+            if (callback) callback(token);
+        });
     });
-  });
 }
 
 // Helper function to extract events from text when JSON parsing fails
 function extractEventsFromText(text, emailToEventMap) {
-  console.log("🔍 Attempting to extract events from raw text");
-  
-  // If text is empty or invalid, return empty array
-  if (!text || typeof text !== 'string' || text.length < 10) {
-    return [];
-  }
-  
-  const events = [];
-  // Look for date patterns in the text
-  const dateRegex = /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/g;
-  const timeRegex = /(\d{1,2}[:\.]\d{2}\s*(am|pm|AM|PM)?)/g;
-  
-  // Look for event-like sections in the text
-  const eventSegments = text.split(/Event\s*\d+:|\d+\.\s*Title:|[\n\r]{2,}/);
-  
-  eventSegments.forEach((segment, index) => {
-    // Skip if segment is too short
-    if (segment.length < 10) return;
+    console.log("🔍 Attempting to extract events from raw text");
     
-    // Extract potential event data
-    const titleMatch = segment.match(/title[:\s]+([^\n\r]+)/i) || 
-                      segment.match(/([^:\n\r]{5,})/);
-    const dateMatch = segment.match(/date[:\s]+([^\n\r]+)/i) || 
-                    segment.match(dateRegex);
-    const timeMatch = segment.match(/time[:\s]+([^\n\r]+)/i) || 
-                    segment.match(timeRegex);
-    const locationMatch = segment.match(/location[:\s]+([^\n\r]+)/i);
-    const descMatch = segment.match(/description[:\s]+([^\n\r]+)/i);
-    const emailIndexMatch = segment.match(/email(?:\s*number|\s*index)?[:\s]+(\d+)/i) || 
-                          segment.match(/found in email[:\s]+(\d+)/i);
-    
-    // Only proceed if we have at least a date
-    if (dateMatch) {
-      const title = titleMatch ? titleMatch[1].trim() : `Event from extraction ${index + 1}`;
-      const dateStr = dateMatch[1] ? dateMatch[1].trim() : dateMatch[0].trim();
-      const standardDate = standardizeDate(dateStr);
-      const time = timeMatch ? (timeMatch[1] ? timeMatch[1].trim() : timeMatch[0].trim()) : "";
-      const location = locationMatch ? locationMatch[1].trim() : "";
-      const description = descMatch ? descMatch[1].trim() : segment.substring(0, 100) + "...";
-      const emailIndex = emailIndexMatch ? parseInt(emailIndexMatch[1]) : 0;
-      
-      // Find the source email
-      const sourceEmail = emailToEventMap[emailIndex] || (emailToEventMap.length > 0 ? emailToEventMap[0] : null);
-      
-      events.push({
-        id: `event_${Date.now()}_extracted_${index}`,
-        title: title,
-        date: standardDate,
-        time: time,
-        location: location,
-        description: description,
-        timestamp: Date.now(),
-        eventDate: new Date(standardDate).getTime() || Date.now(),
-        added: false,
-        sourceEmailId: sourceEmail ? sourceEmail.emailId : null
-      });
+    // If text is empty or invalid, return empty array
+    if (!text || typeof text !== 'string' || text.length < 10) {
+        return [];
     }
-  });
-  
-  console.log(`✅ Extracted ${events.length} events from raw text`);
-  return events;
+    
+    const events = [];
+    // Look for date patterns in the text
+    const dateRegex = /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/g;
+    const timeRegex = /(\d{1,2}[:\.]\d{2}\s*(am|pm|AM|PM)?)/g;
+    
+    // Look for event-like sections in the text
+    const eventSegments = text.split(/Event\s*\d+:|\d+\.\s*Title:|[\n\r]{2,}/);
+    
+    eventSegments.forEach((segment, index) => {
+        // Skip if segment is too short
+        if (segment.length < 10) return;
+        
+        // Extract potential event data
+        const titleMatch = segment.match(/title[:\s]+([^\n\r]+)/i) || 
+                          segment.match(/([^:\n\r]{5,})/);
+        const dateMatch = segment.match(/date[:\s]+([^\n\r]+)/i) || 
+                        segment.match(dateRegex);
+        const timeMatch = segment.match(/time[:\s]+([^\n\r]+)/i) || 
+                        segment.match(timeRegex);
+        const locationMatch = segment.match(/location[:\s]+([^\n\r]+)/i);
+        const descMatch = segment.match(/description[:\s]+([^\n\r]+)/i);
+        const emailIndexMatch = segment.match(/email(?:\s*number|\s*index)?[:\s]+(\d+)/i) || 
+                              segment.match(/found in email[:\s]+(\d+)/i);
+        
+        // Only proceed if we have at least a date
+        if (dateMatch) {
+            const title = titleMatch ? titleMatch[1].trim() : `Event from extraction ${index + 1}`;
+            const dateStr = dateMatch[1] ? dateMatch[1].trim() : dateMatch[0].trim();
+            const standardDate = standardizeDate(dateStr);
+            const time = timeMatch ? (timeMatch[1] ? timeMatch[1].trim() : timeMatch[0].trim()) : "";
+            const location = locationMatch ? locationMatch[1].trim() : "";
+            const description = descMatch ? descMatch[1].trim() : segment.substring(0, 100) + "...";
+            const emailIndex = emailIndexMatch ? parseInt(emailIndexMatch[1]) : 0;
+            
+            // Find the source email
+            const sourceEmail = emailToEventMap[emailIndex] || (emailToEventMap.length > 0 ? emailToEventMap[0] : null);
+            
+            events.push({
+                id: `event_${Date.now()}_extracted_${index}`,
+                title: title,
+                date: standardDate,
+                time: time,
+                location: location,
+                description: description,
+                timestamp: Date.now(),
+                eventDate: new Date(standardDate).getTime() || Date.now(),
+                added: false,
+                sourceEmailId: sourceEmail ? sourceEmail.emailId : null
+            });
+        }
+    });
+    
+    console.log(`✅ Extracted ${events.length} events from raw text`);
+    return events;
+}
+
+// Check and sync calendar events with extension
+async function syncCalendarEvents(token) {
+    try {
+        console.log("🔄 Starting calendar events sync...");
+        
+        // Get events from our cache
+        const ourEvents = await getEventsFromCache();
+        if (!ourEvents || ourEvents.length === 0) {
+            console.log("ℹ️ No events in cache to sync");
+            return { synced: 0 };
+        }
+        
+        let syncedCount = 0;
+        
+        // Process each event to check if it exists in calendar
+        for (const event of ourEvents) {
+            // Verify if the event exists in calendar
+            const exists = await verifyEventInCalendar(token, event);
+            
+            // If event exists in calendar but not marked as added in our system
+            if (exists && !event.added) {
+                console.log(`✅ Event "${event.title}" found in calendar - marking as added`);
+                await markEventAsAdded(event.id);
+                syncedCount++;
+            }
+            // If event doesn't exist in calendar but is marked as added in our system
+            else if (!exists && event.added) {
+                console.log(`⚠️ Event "${event.title}" not found in calendar - marking as not added`);
+                await markEventAsNotAdded(event.id);
+                syncedCount++;
+            }
+        }
+        
+        console.log(`✅ Calendar events sync completed - ${syncedCount} events updated`);
+        return { synced: syncedCount };
+    } catch (error) {
+        console.error("❌ Error syncing calendar events:", error);
+        throw error;
+    }
 }

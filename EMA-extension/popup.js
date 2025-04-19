@@ -194,50 +194,86 @@ document.addEventListener('DOMContentLoaded', function() {
     // Function to extract calendar events from emails
     function extractCalendarEvents() {
         // Show loading state if not already shown
-        if (!calendarEvents.querySelector('.event-item')) {
-            calendarEvents.innerHTML = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
+        const loadingPlaceholder = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
+        
+        if (calendarEvents.innerHTML.trim() === '' || 
+            !calendarEvents.innerHTML.includes('event-item')) {
+            calendarEvents.innerHTML = loadingPlaceholder;
         }
         
-        // Check if we're in rate limited mode
-        chrome.storage.local.get(['gemini_rate_limited'], function(data) {
-            if (data.gemini_rate_limited) {
-                const rateLimitTime = new Date(data.gemini_rate_limited);
-                const now = new Date();
-                const minutesAgo = Math.floor((now - rateLimitTime) / (1000 * 60));
-                
-                if (minutesAgo < 60) { // Less than an hour ago
-                    // Add a small note about limited features
-                    const note = document.createElement('div');
-                    note.className = 'api-limit-note';
-                    note.innerHTML = `
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="8" x2="12" y2="12"></line>
-                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                        </svg>
-                        <span>Using basic event detection (API quota reached)</span>
-                    `;
-                    
-                    // Insert after the header
-                    const header = document.querySelector('.calendar-events-section h3');
-                    if (header && !document.querySelector('.api-limit-note')) {
-                        header.parentNode.insertBefore(note, header.nextSibling);
-                    }
-                }
-            }
-        });
+        // Clear any previous timeouts to prevent multiple requests
+        if (window.extractEventsTimeout) {
+            clearTimeout(window.extractEventsTimeout);
+        }
         
-        // Request event extraction from background script
+        // Add a small spinner to the refresh button
+        const refreshButton = document.getElementById('refresh-events');
+        if (refreshButton) {
+            const originalContent = refreshButton.innerHTML;
+            refreshButton.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinning">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+                Refreshing...
+            `;
+            
+            // Disable the button while refreshing
+            refreshButton.style.pointerEvents = 'none';
+            refreshButton.style.opacity = '0.7';
+            
+            // Restore button after 5 seconds if no response
+            window.refreshButtonTimeout = setTimeout(() => {
+                refreshButton.innerHTML = originalContent;
+                refreshButton.style.pointerEvents = '';
+                refreshButton.style.opacity = '';
+            }, 5000);
+        }
+        
+        // First, sync with Google Calendar to ensure our event statuses are up-to-date
         chrome.runtime.sendMessage(
-            {action: "extractEvents"},
-            function(response) {
-                if (response && response.events && response.events.length > 0) {
-                    displayCalendarEvents(response.events);
+            {action: "syncCalendarEvents"},
+            function(syncResponse) {
+                console.log("Calendar sync result:", syncResponse);
+                
+                // Now request event extraction or use the updated events from sync
+                if (syncResponse && syncResponse.success && syncResponse.events) {
+                    // Use events returned from sync
+                    handleEventsResponse(syncResponse);
                 } else {
-                    calendarEvents.innerHTML = '<p class="events-placeholder">No events found in your emails.</p>';
+                    // Fallback to regular event extraction
+                    chrome.runtime.sendMessage(
+                        {action: "extractEvents"},
+                        function(response) {
+                            handleEventsResponse(response);
+                        }
+                    );
                 }
             }
         );
+        
+        // Helper function to handle event response and update UI
+        function handleEventsResponse(response) {
+            // Clear loading spinner
+            if (refreshButton && window.refreshButtonTimeout) {
+                clearTimeout(window.refreshButtonTimeout);
+                refreshButton.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                    Refresh
+                `;
+                refreshButton.style.pointerEvents = '';
+                refreshButton.style.opacity = '';
+            }
+            
+            if (response && response.events && response.events.length > 0) {
+                console.log(`Displaying ${response.events.length} calendar events`);
+                displayCalendarEvents(response.events);
+            } else {
+                calendarEvents.innerHTML = '<p class="events-placeholder">No events found in your emails.</p>';
+                console.log("No calendar events found or error occurred");
+            }
+        }
     }
     
     // Function to display calendar events
@@ -250,6 +286,19 @@ document.addEventListener('DOMContentLoaded', function() {
         // Clear the current content
         calendarEvents.innerHTML = '';
         
+        // Filter out events based on user preference (can be added later)
+        const showAddedEvents = localStorage.getItem('showAddedEvents') !== 'false'; // Default to true
+        
+        // Sort events by date (most recent first)
+        events.sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+            return dateA - dateB;
+        });
+        
+        // Count how many valid events we're displaying
+        let validEventsCount = 0;
+        
         // Create HTML for each event
         events.forEach(event => {
             // Skip invalid events
@@ -257,6 +306,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.warn("Skipping event without date:", event);
                 return;
             }
+            
+            // Skip events that have been added to calendar if showAddedEvents is false
+            if (!showAddedEvents && event.added) {
+                return;
+            }
+            
+            validEventsCount++;
             
             const eventElement = document.createElement('div');
             eventElement.className = `event-item${event.added ? ' added' : ''}`;
@@ -316,7 +372,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${event.location}
                 </div>
                 ` : ''}
-                ${event.description ? `<div class="event-description">${event.description}</div>` : ''}
+                ${event.description ? `<div class="event-description">${event.description.substring(0, 100)}${event.description.length > 100 ? '...' : ''}</div>` : ''}
                 <div class="event-actions">
                     ${event.added ? `
                     <div class="event-added-badge">Added to Calendar</div>
@@ -348,6 +404,21 @@ document.addEventListener('DOMContentLoaded', function() {
             calendarEvents.appendChild(eventElement);
         });
         
+        // Show placeholder if no valid events after filtering
+        if (validEventsCount === 0) {
+            if (!showAddedEvents) {
+                calendarEvents.innerHTML = '<p class="events-placeholder">No new events found. <a href="#" id="show-added-events">Show added events</a></p>';
+                document.getElementById('show-added-events').addEventListener('click', function(e) {
+                    e.preventDefault();
+                    localStorage.setItem('showAddedEvents', 'true');
+                    displayCalendarEvents(events);
+                });
+            } else {
+                calendarEvents.innerHTML = '<p class="events-placeholder">No calendar events found.</p>';
+            }
+            return;
+        }
+        
         // Add event listeners to the "Add to Calendar" buttons
         const addButtons = calendarEvents.querySelectorAll('.add-to-calendar');
         addButtons.forEach(button => {
@@ -365,6 +436,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 openEmailInGmail(emailId);
             });
         });
+        
+        // Add option to hide added events if there are any
+        if (events.some(e => e.added) && showAddedEvents) {
+            const controlElement = document.createElement('div');
+            controlElement.className = 'events-control';
+            controlElement.innerHTML = `
+                <label>
+                    <input type="checkbox" id="hide-added-events" ${!showAddedEvents ? 'checked' : ''}>
+                    Hide events already added to calendar
+                </label>
+            `;
+            calendarEvents.insertBefore(controlElement, calendarEvents.firstChild);
+            
+            document.getElementById('hide-added-events').addEventListener('change', function(e) {
+                localStorage.setItem('showAddedEvents', !e.target.checked);
+                displayCalendarEvents(events);
+            });
+        }
     }
     
     // Function to add an event to Google Calendar
@@ -392,13 +481,20 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         // Replace the button with a "Added to Calendar" badge
                         eventElement.innerHTML = eventElement.innerHTML.replace(
-                            /<button.*<\/button>/s,
+                            /<button class="add-to-calendar".*?<\/button>/s,
                             '<div class="event-added-badge">Added to Calendar</div>'
                         );
                     }
                     
-                    // Show success message
-                    addMessageToChat(`I've added "${event.title}" to your Google Calendar.`, 'bot');
+                    // Show appropriate success message based on whether the event was already in the calendar
+                    if (response.exists) {
+                        addMessageToChat(`"${event.title}" is already in your Google Calendar.`, 'bot');
+                    } else {
+                        addMessageToChat(`I've added "${event.title}" to your Google Calendar.`, 'bot');
+                    }
+                    
+                    // Refresh the events list to get the updated event statuses
+                    setTimeout(extractCalendarEvents, 1000);
                 } else {
                     // Re-enable the button
                     if (button) {
