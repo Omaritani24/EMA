@@ -1071,7 +1071,7 @@ function getSummary() {
 getSummary();
 
 // Add this to your existing background.js
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
     if (request.action === "getEmails") {
         // Get the filter from the request
         const filter = request.filter || '10';
@@ -1114,6 +1114,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         return true; // Required for async response
     }
+    async function summarizeSingleEmail(prompt) {
+      const GEMINI_API_KEY = "YOUR_ACTUAL_API_KEY_HERE"; // Replace this securely
+    
+      const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+      const requestBody = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 120,
+          topP: 0.8,
+          topK: 40
+        }
+      };
+    
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody)
+        });
+    
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          console.error("Gemini summary error:", data.error?.message || "Unknown error");
+          return null;
+        }
+    
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      } catch (error) {
+        console.error("Error calling Gemini:", error);
+        return null;
+      }
+    }
+    
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.action === "summarizeEachEmail") {
+        (async () => {
+          const emails = request.emails || [];
+    
+          console.log("📄 Emails to summarize:", emails);
+    
+          const summarizedEmails = await Promise.all(
+            emails.map(async (email) => {
+              const prompt = `Summarize the following email:\n\nSubject: ${email.subject || ''}\nFrom: ${email.from || ''}\n\n${email.body || email.snippet || ''}`;
+              const summary = await summarizeSingleEmail(prompt);
+              return {
+                ...email,
+                summary: summary || "No summary generated.",
+              };
+            })
+          );
+    
+          sendResponse({ emailsWithSummaries: summarizedEmails });
+        })(); // ← run async IIFE
+    
+        return true; // Required for async sendResponse
+      }
+    });
+    
     
     if (request.action === "summarizeEmails") {
         // Get emails from the request
@@ -1209,12 +1268,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const result = await new Promise(resolve => {
         chrome.storage.local.get(['pendingEmail'], resolve);
       });
+      
         const contacts = await new Promise(resolve => {
         chrome.storage.local.get(['knownContacts'], async result => {
           resolve(result.knownContacts || []);
-          // For email confirmation flow
-          const userMessage = request.message.toLowerCase();
           
+          const userMessage = request.message.toLowerCase();
           // ✅ Handle YES: send immediately
           if (userMessage === "yes" && result.pendingEmail) {
             const { to, subject, body } = result.pendingEmail;
@@ -1251,13 +1310,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           if (!isEmailRequest) {
             // Create a conversational prompt that handles English and Arabizi
             const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
-            You can understand both English and Arabic written in English letters (Arabizi/Franco-Arab).
+            You have access to the user's recent emails and can help answer questions about them.
+            Your goal is to help the user understand, organize, and act on their emails. 
+            When the user asks you a question, you may search the full text of any email, identify relevant senders, dates, attachments and threads, and deliver clear, concise, human‑friendly answers. 
+            Your job is to answer questions about their email quickly and with minimal back‑and‑forth. When the user asks for something—like “emails with deadlines”—you should assume reasonable defaults (e.g. upcoming due dates in the next 7 days), immediately scan all messages for date‑keywords (“due,” “deadline,” calendar dates), and return a concise list of matches showing subject, sender, and deadline date. Only ask a follow‑up question if you absolutely cannot find or interpret any results. When drafting your reply, lead with the answer, then offer more detail (“Would you like me to filter by sender or topic?”) only if the user asks for it.
+            your only source of information is the emails you have access to.
+            You can summarize long conversations, extract key action items or deadlines, surface unanswered requests, suggest email replies tailored to the user’s tone and intent, classify messages by topic or priority, and flag potential scheduling needs. 
+            Always respect the user’s privacy and only access emails when the user explicitly asks. If you need clarification before answering, ask follow‑up questions. When drafting a reply, match the user’s style, use proper greetings and sign‑offs, and keep each message brief unless they ask for more detail. 
+            Above all, be accurate, helpful, and mindful that you’re operating on the user’s personal correspondence.
 
-            Important language rules:
-            - If the user writes in English (like "what's new?" or "show my emails"), respond in English
-            - If the user writes in Arabizi/Franco-Arab (like "kifak" "shu fi" "3am befham" "ma3ak"), respond in Arabizi/Franco-Arab text
-            - Keep responses friendly and natural in the appropriate language
-            - Keep all email analysis functionality working as normal
             
             Context:
             The user message is not asking to send an email. This is just a normal conversation.
