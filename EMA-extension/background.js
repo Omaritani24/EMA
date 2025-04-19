@@ -1071,7 +1071,7 @@ function getSummary() {
 getSummary();
 
 // Add this to your existing background.js
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener( (request, sender, sendResponse) => {
     if (request.action === "getEmails") {
         // Get the filter from the request
         const filter = request.filter || '10';
@@ -1114,6 +1114,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         return true; // Required for async response
     }
+    async function summarizeSingleEmail(prompt) {
+      const GEMINI_API_KEY = "YOUR_ACTUAL_API_KEY_HERE"; // Replace this securely
+    
+      const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+      const requestBody = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 120,
+          topP: 0.8,
+          topK: 40
+        }
+      };
+    
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody)
+        });
+    
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          console.error("Gemini summary error:", data.error?.message || "Unknown error");
+          return null;
+        }
+    
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      } catch (error) {
+        console.error("Error calling Gemini:", error);
+        return null;
+      }
+    }
+    
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.action === "summarizeEachEmail") {
+        (async () => {
+          const emails = request.emails || [];
+    
+          console.log("📄 Emails to summarize:", emails);
+    
+          const summarizedEmails = await Promise.all(
+            emails.map(async (email) => {
+              const prompt = `Summarize the following email:\n\nSubject: ${email.subject || ''}\nFrom: ${email.from || ''}\n\n${email.body || email.snippet || ''}`;
+              const summary = await summarizeSingleEmail(prompt);
+              return {
+                ...email,
+                summary: summary || "No summary generated.",
+              };
+            })
+          );
+    
+          sendResponse({ emailsWithSummaries: summarizedEmails });
+        })(); // ← run async IIFE
+    
+        return true; // Required for async sendResponse
+      }
+    });
+    
     
     if (request.action === "summarizeEmails") {
         // Get emails from the request
@@ -1209,12 +1268,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const result = await new Promise(resolve => {
         chrome.storage.local.get(['pendingEmail'], resolve);
       });
+      
         const contacts = await new Promise(resolve => {
         chrome.storage.local.get(['knownContacts'], async result => {
           resolve(result.knownContacts || []);
-          // For email confirmation flow
-          const userMessage = request.message.toLowerCase();
           
+          const userMessage = request.message.toLowerCase();
           // ✅ Handle YES: send immediately
           if (userMessage === "yes" && result.pendingEmail) {
             const { to, subject, body } = result.pendingEmail;

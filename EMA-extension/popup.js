@@ -525,6 +525,8 @@ function displaySummary(summaryText) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+   
+
     const chatbox = document.getElementById("chatbox");
     const messageInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("sendBtn");
@@ -572,7 +574,113 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
 setInterval(() => {
     console.log("🟢 Keeping background alive...");
   }, 15000);
-   
+  
+  const openEmailsPageBtn = document.getElementById("open-emails-page");
+  const fetchedEmailsContainer = document.getElementById("fetched-emails");
+  const hideEmailsBtn = document.getElementById("hide-emails-btn");
+  
+  if (openEmailsPageBtn) {
+    openEmailsPageBtn.addEventListener("click", () => {
+      openEmailsPageBtn.disabled = true;
+      openEmailsPageBtn.innerHTML = "⏳ Fetching emails...";
+  
+      const filterValue = document.getElementById("email-filter").value;
+    chrome.runtime.sendMessage({ action: "getEmails", filter: filterValue }, async (response) => {
+
+        if (!response || !response.emails) {
+          fetchedEmailsContainer.innerHTML = "<p>Could not fetch emails.</p>";
+          openEmailsPageBtn.textContent = "View All Fetched Emails";
+          openEmailsPageBtn.disabled = false;
+          return;
+        }
+  
+        let emails = response.emails;
+if (!isNaN(filterValue)) {
+  emails = emails.slice(0, parseInt(filterValue));
+}
+hideEmailsBtn.style.display = "inline-block";
+openEmailsPageBtn.style.display = "none";
+
+
+
+
+        fetchedEmailsContainer.innerHTML = "";
+  
+        for (let i = 0; i < emails.length; i++) {
+          const email = emails[i];
+          const subject = email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
+          const from = email.from || "Unknown";
+          const prompt = ` Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${email.snippet || "No body"}`;
+  
+          const summary = await summarizeWithGemini(prompt);
+  
+          const card = document.createElement("div");
+          card.style = `
+            background: #f8f8f8;
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            font-size: 14px;
+            position: relative;
+          `;
+  
+          card.innerHTML = `
+  <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+    <span style="background: #d3e5ef; color: #333; padding: 2px 8px; border-radius: 6px; font-weight: bold;">General</span>
+    <span style="color: #555; font-weight: bold;">${from.includes("@") ? from.split("@")[1].split(".")[0] : from}</span>
+  </div>
+  <div style="margin-bottom: 8px;">
+    <strong>Summary:</strong> ${summary || "No summary generated."}
+  </div>
+`;
+
+          fetchedEmailsContainer.appendChild(card);
+        }
+  
+        openEmailsPageBtn.textContent = "View All Fetched Emails";
+        openEmailsPageBtn.disabled = false;
+      });
+    });
+  }
+ 
+
+  async function summarizeWithGemini(prompt) {
+    const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks"; // Replace with your actual Gemini API key
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+  
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 100,
+        topP: 0.8,
+        topK: 40,
+      }
+    };
+  
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+  
+      const data = await res.json();
+      return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    } catch (err) {
+      console.error("Gemini API error:", err);
+      return null;
+    }
+  }
+
+  hideEmailsBtn.addEventListener("click", () => {
+    fetchedEmailsContainer.innerHTML = "";
+    hideEmailsBtn.style.display = "none";
+    openEmailsPageBtn.style.display = "inline-block";
+  });
+  
