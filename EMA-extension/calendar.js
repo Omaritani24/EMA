@@ -1,6 +1,6 @@
 // calendar.js
 import { standardizeDate, convertTimeToISO, getEndTime } from './utils.js';
-import { markEventAsAdded, markEventAsNotAdded } from './storage.js';
+import { markEventAsAdded, markEventAsNotAdded, getEventsFromCache } from './storage.js';
 
 // Fetch events from Google Calendar
 export async function fetchCalendarEvents(token, timeMin, timeMax) {
