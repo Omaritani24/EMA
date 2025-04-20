@@ -276,5 +276,5 @@ export function createBasicEventsFromEmails(emails) {
     }
     
     return events;
-}
+  }
   

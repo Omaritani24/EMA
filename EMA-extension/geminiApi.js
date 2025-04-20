@@ -368,7 +368,7 @@ export async function extractCalendarEvents(emails, options = {}) {
         Email content:
         ${emailContent}`;
   
-        console.log(`📝 Constructed prompt for email ${i+1}`,prompt);
+        console.log(`📝 Constructed prompt for email ${i+1}`);
   
         // Gemini API URL
         const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
@@ -571,3 +571,31 @@ export async function processEmailQuery(query, emails) {
     }
 }
   
+export async function summarizeWithGemini(prompt) {
+  const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks"; // Replace with your actual Gemini API key
+  const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 100,
+      topP: 0.8,
+      topK: 40,
+    }
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch (err) {
+    console.error("Gemini API error:", err);
+    return null;
+  }
+}

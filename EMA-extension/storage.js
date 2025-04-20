@@ -512,4 +512,67 @@ export async function markEventAsAdded(eventId) {
       throw error;
     }
 }
-  
+
+// Function to save an email summary to storage
+export async function saveEmailSummary(emailId, summary) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['emailSummaries'], (result) => {
+      const summaries = result.emailSummaries || {};
+      summaries[emailId] = {
+        summary: summary,
+        timestamp: Date.now()
+      };
+      
+      chrome.storage.local.set({ emailSummaries: summaries }, () => {
+        console.log(`✅ Saved summary for email ${emailId}`);
+        resolve(true);
+      });
+    });
+  });
+}
+
+// Function to get a saved email summary from storage
+export async function getEmailSummary(emailId) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['emailSummaries'], (result) => {
+      const summaries = result.emailSummaries || {};
+      const savedSummary = summaries[emailId];
+      
+      // Check if we have a saved summary and it's less than 7 days old
+      if (savedSummary && (Date.now() - savedSummary.timestamp < 7 * 24 * 60 * 60 * 1000)) {
+        console.log(`🎯 Retrieved cached summary for email ${emailId}`);
+        resolve(savedSummary.summary);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+// Function to clean up old summaries (older than 7 days)
+export async function cleanupOldSummaries() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['emailSummaries'], (result) => {
+      const summaries = result.emailSummaries || {};
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      let cleaned = false;
+      
+      // Remove summaries older than 7 days
+      for (const emailId in summaries) {
+        if (summaries[emailId].timestamp < sevenDaysAgo) {
+          delete summaries[emailId];
+          cleaned = true;
+        }
+      }
+      
+      if (cleaned) {
+        chrome.storage.local.set({ emailSummaries: summaries }, () => {
+          console.log('🧹 Cleaned up old email summaries');
+          resolve(true);
+        });
+      } else {
+        resolve(false);
+      }
+    });
+  });
+}

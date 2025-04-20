@@ -1,3 +1,6 @@
+import { summarizeWithGemini } from './geminiApi.js';
+import { getEmailSummary, saveEmailSummary, cleanupOldSummaries } from './storage.js';
+
 // When popup opens, request emails from background script
 document.addEventListener('DOMContentLoaded', function() {
     const chatInput = document.getElementById('chat-input');
@@ -15,6 +18,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
     console.log("📅 Popup: DOMContentLoaded - initializing popup");
 
+    // Immediately load the latest events from storage and display them
+    chrome.storage.local.get(['events'], function(result) {
+        if (result.events && result.events.length > 0) {
+            console.log(`📅 Popup: Found ${result.events.length} events in storage, displaying immediately`);
+            displayCalendarEvents(result.events);
+            
+            // Sync with Google Calendar to update event statuses
+            console.log("📅 Popup: Syncing events with Google Calendar on startup");
+            chrome.runtime.sendMessage(
+                {action: "syncCalendarEvents"},
+                function(syncResponse) {
+                    if (syncResponse && syncResponse.success && syncResponse.events) {
+                        console.log(`📅 Popup: Calendar sync complete, updating events (${syncResponse.events.length} events)`);
+                        displayCalendarEvents(syncResponse.events);
+                    }
+                }
+            );
+        } else {
+            console.log("📅 Popup: No stored events found, waiting for fetch");
+            calendarEvents.innerHTML = '<p class="events-placeholder">Loading events...</p>';
+        }
+    });
+
     // Speech recognition setup
     let recognition = null;
     let isListening = false;
@@ -26,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
     chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
         // Listen for events updated notification
         if (request.action === "eventsUpdated" && request.events) {
-            console.log("📅 Events updated notification received, refreshing UI");
+            console.log(`📅 Popup: Events updated notification received with ${request.events.length} events, refreshing UI`);
             displayCalendarEvents(request.events);
         }
         
@@ -365,7 +391,7 @@ document.addEventListener('DOMContentLoaded', function() {
         events.forEach(event => {
             // Skip invalid events
             if (!event.date) {
-                console.warn("Skipping event without date:", event);
+                console.warn("Skipping event without date: ", event);
                 return;
             }
             
@@ -767,98 +793,122 @@ setInterval(() => {
     openEmailsPageBtn.addEventListener("click", () => {
       openEmailsPageBtn.disabled = true;
       openEmailsPageBtn.innerHTML = "⏳ Fetching emails...";
-  
-      const filterValue = document.getElementById("email-filter").value;
-    chrome.runtime.sendMessage({ action: "getEmails", filter: filterValue }, async (response) => {
 
-        if (!response || !response.emails) {
-          fetchedEmailsContainer.innerHTML = "<p>Could not fetch emails.</p>";
-          openEmailsPageBtn.textContent = "View All Fetched Emails";
-          openEmailsPageBtn.disabled = false;
-          return;
-        }
-  
-        let emails = response.emails;
-if (!isNaN(filterValue)) {
-  emails = emails.slice(0, parseInt(filterValue));
-}
-hideEmailsBtn.style.display = "inline-block";
-openEmailsPageBtn.style.display = "none";
+      // Clean up old summaries when fetching new emails
+      cleanupOldSummaries().then(() => {
+        const filterValue = document.getElementById("email-filter").value;
+        chrome.runtime.sendMessage({ action: "getEmails", filter: filterValue }, async (response) => {
 
+          if (!response || !response.emails) {
+            fetchedEmailsContainer.innerHTML = "<p>Could not fetch emails.</p>";
+            openEmailsPageBtn.textContent = "View All Fetched Emails";
+            openEmailsPageBtn.disabled = false;
+            return;
+          }
 
+          let emails = response.emails;
+          if (!isNaN(filterValue)) {
+            emails = emails.slice(0, parseInt(filterValue));
+          }
+          hideEmailsBtn.style.display = "inline-block";
+          openEmailsPageBtn.style.display = "none";
 
+          fetchedEmailsContainer.innerHTML = "";
 
-        //fetchedEmailsContainer.innerHTML = "";
-  
-        for (let i = 0; i < emails.length; i++) {
-          const email = emails[i];
-          const subject = email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
-          const from = email.from || "Unknown";
-          const sender = from.includes("@") ? from.split("@")[0] : from;
-          const prompt = ` Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${email.snippet || "No body"}`;
-  
-          const summary = await summarizeWithGemini(prompt);
-  
-          const card = document.createElement("div");
-          card.style = `
-            background: #f8f8f8;
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 12px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-            font-size: 14px;
-            position: relative;
-          `;
-  
-          card.innerHTML = `
-  <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-    <span style="background: #d3e5ef; color: #333; padding: 2px 8px; border-radius: 6px; font-weight: bold;">General</span>
-    <span style="color: #555; font-weight: bold;">${sender}</span>
-  </div>
-  <div style="margin-bottom: 8px;">
-    <strong>Summary:</strong> ${summary || "No summary generated."}
-  </div>
+          for (let i = 0; i < emails.length; i++) {
+            const email = emails[i];
+            const subject = email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
+            const from = email.from || "Unknown";
+            const sender = from.includes("@") ? from.split("@")[0] : from;
+            
+            // Get the email ID
+            const emailId = email.id;
+            
+            // Check if we have a cached summary for this email
+            let summary = await getEmailSummary(emailId);
+            let fromCache = false;
+            
+            // If no cached summary, generate a new one
+            if (!summary) {
+              console.log(`No cached summary found for email ${emailId}, generating new one...`);
+              
+              // Extract the full email content
+              let emailContent = "";
+              
+              // Check if the email has a payload with parts (MIME structure)
+              if (email.payload && (email.payload.body || email.payload.parts)) {
+                // Try to get content from main body
+                if (email.payload.body && email.payload.body.data) {
+                  emailContent = atob(email.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                } 
+                // Or check in parts
+                else if (email.payload.parts) {
+                  // Find text parts
+                  for (const part of email.payload.parts) {
+                    if (part.mimeType === 'text/plain' && part.body && part.body.data) {
+                      const partContent = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                      emailContent += partContent + "\n";
+                    }
+                  }
+                }
+              }
+              
+              // Fall back to snippet if parsing failed
+              if (!emailContent || emailContent.length < 10) {
+                emailContent = email.body || email.snippet || "No body";
+                console.log(`Using fallback content for email ${i+1} (snippet)`);
+              } else {
+                console.log(`Successfully extracted full content for email ${i+1} (length: ${emailContent.length})`);
+              }
+              
+              const prompt = ` Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${emailContent}`;
+      
+              summary = await summarizeWithGemini(prompt);
+              
+              // Save the summary to cache for future use
+              if (summary) {
+                await saveEmailSummary(emailId, summary);
+              }
+            } else {
+              console.log(`Using cached summary for email ${emailId}`);
+              fromCache = true;
+            }
+            
+            console.log('Email summary: ', summary);
+
+            const card = document.createElement("div");
+            card.style = `
+              background: #f8f8f8;
+              border-radius: 10px;
+              padding: 12px;
+              margin-bottom: 12px;
+              box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+              font-size: 14px;
+              position: relative;
+            `;
+
+            card.innerHTML = `
+<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+  <span style="background: #d3e5ef; color: #333; padding: 2px 8px; border-radius: 6px; font-weight: bold;">General</span>
+  <span style="color: #555; font-weight: bold;">${sender}</span>
+</div>
+<div style="margin-bottom: 8px;">
+  <strong>Summary:</strong> ${summary || "No summary generated."}
+</div>
 `;
 
+            fetchedEmailsContainer.appendChild(card);
+          }
 
-          fetchedEmailsContainer.appendChild(card);
-        }
-  
-        openEmailsPageBtn.textContent = "View All Fetched Emails";
-        openEmailsPageBtn.disabled = false;
+          openEmailsPageBtn.textContent = "View All Fetched Emails";
+          openEmailsPageBtn.disabled = false;
+        });
       });
     });
   }
  
 
-  async function summarizeWithGemini(prompt) {
-    const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks"; // Replace with your actual Gemini API key
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-  
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 100,
-        topP: 0.8,
-        topK: 40,
-      }
-    };
-  
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-  
-      const data = await res.json();
-      return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    } catch (err) {
-      console.error("Gemini API error:", err);
-      return null;
-    }
-  }
+
 
   hideEmailsBtn.addEventListener("click", () => {
     fetchedEmailsContainer.innerHTML = "";

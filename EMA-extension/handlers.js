@@ -21,7 +21,7 @@ export function registerHandlers() {
 
     // Main message listener
     chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-        console.log("📅 Handlers: Received message", request.action);
+        console.log("📅 Handlers: Received message: ", request.action);
         
         // Pass through status updates to the popup
         if (request.action === "updateSummaryStatus") {
@@ -155,7 +155,7 @@ export function registerHandlers() {
                         });
                     });
                 } catch (error) {
-                    console.error("❌ Error syncing calendar events:", error);
+                    console.error("❌ Error syncing calendar events: ", error);
                     sendResponse({
                         success: false,
                         error: "Failed to sync with Google Calendar."
