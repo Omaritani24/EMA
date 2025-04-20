@@ -7,23 +7,68 @@ const GEMINI_API_KEY = 'AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks';
 export async function summarizeEmails(emails) {
     if (!emails || emails.length === 0) {
       console.warn("⚠️ No emails provided for summarization.");
-      return "No summary available.";
+      return "No emails to summarize.";
     }
     
     try {
-      // First check if we have a cached summary
-      const cachedSummary = await getSummaryFromCache(emails);
-      if (cachedSummary) {
-        console.log("🎯 Using cached summary");
-        return cachedSummary;
+      // First check if we have a cached summary - with a timeout
+      const cachedSummaryPromise = getSummaryFromCache(emails);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Cache timeout')), 2000)
+      );
+      
+      try {
+        const cachedSummary = await Promise.race([cachedSummaryPromise, timeoutPromise]);
+        if (cachedSummary) {
+          console.log("🎯 Using cached summary");
+          return cachedSummary;
+        }
+      } catch (cacheError) {
+        console.log("Cache retrieval timed out or failed, proceeding with basic summary");
       }
       
-      // No cached summary, proceed with API call
-      console.log("🔄 No cache hit - calling Gemini API");
-  
-      // Clean and join email snippets into a single prompt
+      // Generate a basic summary immediately while the API call is in progress
+      const basicSummary = generateBasicSummary(emails);
+      
+      // Start the API call in the background
+      generateDetailedSummary(emails).then(detailedSummary => {
+        if (detailedSummary) {
+          // Store the detailed summary in cache for future use
+          storeSummaryInCache(emails, detailedSummary).catch(err => 
+            console.error("Failed to store summary in cache:", err)
+          );
+        }
+      }).catch(err => 
+        console.error("Failed to generate detailed summary:", err)
+      );
+      
+      // Return the basic summary immediately
+      return basicSummary;
+      
+    } catch (err) {
+      console.error("❌ Error in summarizeEmails:", err);
+      return generateBasicSummary(emails);
+    }
+}
+
+// Helper function to generate a basic summary without API call
+function generateBasicSummary(emails) {
+    if (!emails || emails.length === 0) return "No emails to summarize.";
+    
+    const emailCount = emails.length;
+    const recentSubjects = emails
+      .slice(0, 3)
+      .map(email => email.subject || "Untitled")
+      .join(", ");
+    
+    return `${emailCount} recent email${emailCount > 1 ? 's' : ''} including: ${recentSubjects}`;
+}
+
+// Helper function to generate a detailed summary using Gemini API
+async function generateDetailedSummary(emails) {
+    try {
       const emailContent = emails.map(email => email.snippet).join("\n\n");
-  
+      
       const prompt = `Create an extremely concise summary of these emails in 2-3 short sentences only.
       Focus ONLY on the most critical information.
       Maintain a conversational tone but prioritize brevity above all else.
@@ -31,12 +76,9 @@ export async function summarizeEmails(emails) {
       
       Emails to summarize:
       ${emailContent}`;
-  
-      console.log("📝 Constructed prompt for Gemini:\n", prompt);
-  
-      // Gemini API URL (v1 is the latest stable version)
+      
       const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-  
+      
       const requestBody = {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
@@ -46,36 +88,25 @@ export async function summarizeEmails(emails) {
           topK: 40
         }
       };
-  
+      
       const options = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody)
       };
-  
-      console.log("🚀 Sending request to Gemini API...");
-  
+      
       const response = await fetch(url, options);
       const data = await response.json();
-  
+      
       if (!response.ok || data.error) {
-        console.error("❌ Error summarizing with Gemini:", data?.error?.message || "Unknown error");
-        return "No summary available.";
-      }
-  
-      // Extracting summary from Gemini response
-      const summary = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      console.log("✅ Summary received:", summary);
-      
-      // Store the summary in cache for future use
-      if (summary) {
-        await storeSummaryInCache(emails, summary);
+        throw new Error(data?.error?.message || "API error");
       }
       
-      return summary || "No summary generated.";
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      
     } catch (err) {
-      console.error("❌ Network/Fetch error:", err);
-      return "No summary available.";
+      console.error("Failed to generate detailed summary:", err);
+      return null;
     }
 }
   

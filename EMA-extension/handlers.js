@@ -186,187 +186,70 @@ export function registerHandlers() {
         
         if (request.action === "processMessage") {
             (async () => {
-                // Get both pendingEmail and contacts in one go
-                const storage = await new Promise(resolve => {
-                    chrome.storage.local.get(['pendingEmail', 'knownContacts'], resolve);
-                });
-                
-                const pendingEmail = storage.pendingEmail;
-                const contacts = storage.knownContacts || [];
-                
                 const userMessage = request.message.toLowerCase();
                 
-                // ✅ Handle YES: send immediately
-                if (userMessage === "yes" && pendingEmail) {
-                    const { to, subject, body } = pendingEmail;
-                
-                    if (!to || !subject || !body) {
-                        sendResponse({ reply: "⚠️ Sorry, I don't have a complete email to send. Try again with more context." });
-                        return;
-                    }
-                
-                    authenticateUser(async (token) => {
-                        try {
-                            await sendEmail(token, to, subject, body);
-                            chrome.storage.local.remove('pendingEmail');
-                            sendResponse({ reply: `✅ Email sent to ${to}. What else can I help you with?` });
-                        } catch (err) {
-                            sendResponse({ reply: "❌ Failed to send the email. Please try again." });
-                        }
-                    });
-                
-                    return;
-                }
-                
-                // ✅ Handle NO: cancel
-                if (userMessage === "no" && pendingEmail) {
-                    chrome.storage.local.remove('pendingEmail');
-                    sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
-                    return;
-                }
-    
-                // Check if the user specifically wants to send an email
-                const isEmailRequest = /send\s+(an|a)\s+email|write\s+(an|a)\s+email|email\s+to|compose\s+(an|a)\s+email|draft\s+(an|a)\s+email/i.test(request.message);
-                
-                // If not an email request, process as normal conversation
-                if (!isEmailRequest) {
-                    // Create a conversational prompt that handles English and Arabizi
-                    const prompt = `You are EMA (Email Management Assistant), a helpful and friendly AI assistant.
-                    You can understand both English and Arabic written in English letters (Arabizi/Franco-Arab).
-    
-                    Important language rules:
-                    - Keep responses friendly and natural in the appropriate language
-                    - Keep all email analysis functionality working as normal
+                // First check if we have emails in storage
+                chrome.storage.local.get(['emails'], async function(result) {
+                    const emails = result.emails || [];
                     
-                    Context:
-                    The user message is not asking to send an email. This is just a normal conversation.
-                    
-                    User message: ${request.message}`;
-                    
-                    // First check cache before calling API
-                    const cacheKey = `chat_${generateEmailContentHash([{snippet: request.message}])}`;
-                    const cachedResponse = await getCachedItem(cacheKey);
-                    
-                    if (cachedResponse) {
-                        console.log("🎯 Using cached chat response");
-                        sendResponse({reply: cachedResponse});
-                        return;
-                    }
-                    
-                    // No cache hit, call Gemini API
-                    const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
-                    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-                    
-                    const requestBody = {
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: {
-                            temperature: 0.7,
-                            topP: 0.8,
-                            topK: 40
-                        }
-                    };
-                    
-                    try {
-                        const response = await fetch(url, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(requestBody)
+                    // If asking about emails and we have them in storage
+                    if ((userMessage.includes('email') || userMessage.includes('mail') || 
+                         userMessage.includes('message') || userMessage.includes('tell me about')) && 
+                        emails.length > 0) {
+                        
+                        // Generate a fresh summary
+                        const summary = await summarizeEmails(emails);
+                        sendResponse({
+                            reply: summary
                         });
-                        
-                        const data = await response.json();
-                        
-                        if (!response.ok || data.error) {
-                            console.error("Error processing message:", data?.error?.message || "Unknown error");
-                            sendResponse({reply: "Sorry, I encountered an error. Please try again."});
-                            return;
-                        }
-                        
-                        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 
-                                    "I couldn't process that. Please try again.";
-                        
-                        // Cache the response
-                        await storeCachedItem(cacheKey, reply);
-                        
-                        sendResponse({reply: reply});
-                    } catch (error) {
-                        console.error("Error in message processing:", error);
-                        sendResponse({reply: "Sorry, I encountered an error processing your message."});
                     }
-                    return;
-                }
-                
-                // Continue with the email processing ONLY if it's an email request
-                let contactLines = "";
-    
-                if (Array.isArray(contacts) && contacts.length > 0) {
-                    contactLines = contacts.map(([name, email]) => `- ${name}: ${email}`).join('\n');
-                } else {
-                    contactLines = "- someone@example.com";
-                }
-            
-                // ✅ Generate email from freeform input using Gemini
-                const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
-                const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
-                
-                const prompt = `
-                You are an email assistant. You MUST generate a professional email based on the user's request.
-                
-                1. ONLY use the contacts listed below.
-                2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email  "
-                3. The subject and body should directly reflect what the user asked.
-                4. the email should be professional and well written, and a proper length.
-                5. sign it with the users name from the email that you are sending from.(do not write sent from)
-                6. Follow this format exactly:
-                
-                To: [recipient@example.com]  
-                Subject: [email subject]  
-                Body:  
-                [email message]
-                
-                Known contacts:
-                ${contactLines}
-                
-                User said: "${request.message}"
-                `;
-                
-                try {
-                    const res = await fetch(url, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                    });
-            
-                    const data = await res.json();
-                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
-            
-                    const toMatch = text.match(/To:\s*(.*)/i);
-                    const subjectMatch = text.match(/Subject:\s*(.*)/i);
-                    const bodyMatch = text.match(/Body:\s*([\s\S]*)/i);
-                    
-                    if (!toMatch || !subjectMatch || !bodyMatch) {
-                        sendResponse({ reply: "❌ I couldn't generate a complete email. Please rephrase your request or provide more details." });
-                        return;
+                    // If asking about emails but we don't have any stored
+                    else if ((userMessage.includes('email') || userMessage.includes('mail') || 
+                             userMessage.includes('message')) && emails.length === 0) {
+                        
+                        // Try to fetch emails first
+                        authenticateUser(async function(token) {
+                            try {
+                                const messages = await fetchEmails(token, '10');
+                                let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
+                                const fullEmails = await Promise.all(emailPromises);
+                                const validEmails = fullEmails.filter(email => email !== null);
+                                
+                                if (validEmails.length > 0) {
+                                    // Store the emails
+                                    await storeEmails(validEmails);
+                                    chrome.storage.local.set({ emails: validEmails });
+                                    
+                                    // Generate summary
+                                    const summary = await summarizeEmails(validEmails);
+                                    sendResponse({
+                                        reply: summary
+                                    });
+                                } else {
+                                    sendResponse({
+                                        reply: "I couldn't find any recent emails. Would you like me to try again?"
+                                    });
+                                }
+                            } catch (error) {
+                                console.error("Error fetching emails:", error);
+                                sendResponse({
+                                    reply: "I had trouble accessing your emails. Please make sure I have permission to access your Gmail account."
+                                });
+                            }
+                        });
                     }
-                    
-                    const to = toMatch[1].trim();
-                    const subject = subjectMatch[1].trim();
-                    const body = bodyMatch[1].trim();
-                    
-            
-                    chrome.storage.local.set({
-                        pendingEmail: { to, subject, body }
-                    });
-            
-                    sendResponse({
-                        reply: `Here's your email:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`
-                    });
-                } catch (err) {
-                    console.error("❌ Gemini error:", err);
-                    sendResponse({ reply: "❌ Error generating the email. Try again later." });
-                }
+                    // For other types of messages
+                    else {
+                        sendResponse({
+                            reply: "I'm here to help with your emails! You can ask me about your recent emails, or ask me to look for specific information in them."
+                        });
+                    }
+                });
+                
+                return true; // Required for async response
             })();
             
-            return true;
+            return true; // Required for async response
         }
     });
      
