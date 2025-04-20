@@ -290,3 +290,75 @@ export async function extractCalendarEvents(emails) {
     }
 }
   
+// New function to process email questions dynamically
+export async function processEmailQuery(query, emails) {
+    if (!emails || emails.length === 0) {
+      return "I don't have any emails to analyze. Please refresh your emails first.";
+    }
+    
+    try {
+      console.log("Processing email query:", query);
+      
+      // Format emails for better context
+      const formattedEmails = emails.map((email, index) => {
+        const from = email.from || "Unknown";
+        const subject = email.subject || email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
+        const date = email.internalDate ? new Date(parseInt(email.internalDate)).toLocaleString() : "Unknown date";
+        
+        return `Email ${index + 1}:
+          From: ${from}
+          Subject: ${subject}
+          Date: ${date}
+          Content: ${email.snippet || "No content"}
+        `;
+      }).join("\n\n");
+      
+      const prompt = `You are EMA, an email assistant AI. Answer the following question about these emails.
+      Be concise, helpful, and conversational.
+      
+      If asked about specific email content, provide relevant details from the emails.
+      If asked for summaries, focus on the most important information.
+      If asked about senders, recipients, or dates, extract that information accurately.
+      
+      User's question: "${query}"
+      
+      Emails to analyze:
+      ${formattedEmails}`;
+      
+      const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+      
+      const requestBody = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 300,
+          topP: 0.8,
+          topK: 40
+        }
+      };
+      
+      const options = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody)
+      };
+      
+      console.log("Sending query to Gemini API...");
+      
+      const response = await fetch(url, options);
+      const data = await response.json();
+      
+      if (!response.ok || data.error) {
+        console.error("Error processing query:", data?.error?.message || "Unknown error");
+        return "I'm having trouble analyzing your emails right now. Could you try asking in a different way?";
+      }
+      
+      const answer = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      return answer || "I couldn't find a good answer to your question in these emails.";
+      
+    } catch (error) {
+      console.error("Error in processEmailQuery:", error);
+      return "Sorry, I encountered an error while processing your question. Please try again.";
+    }
+}
+  

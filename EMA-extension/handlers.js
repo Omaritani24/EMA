@@ -1,7 +1,7 @@
 // handlers.js
 import { authenticateUser, forceReauthenticate } from './auth.js';
 import { fetchEmails, fetchEmailContent } from './gmailApi.js';
-import { summarizeEmails, extractCalendarEvents } from './geminiApi.js';
+import { summarizeEmails, extractCalendarEvents, processEmailQuery } from './geminiApi.js';
 import { fetchCalendarEvents, addEventToCalendar, syncCalendarEvents, verifyEventInCalendar } from './calendar.js';
 import { initSummaryDB, storeEmails, getSummaryFromCache, storeSummaryInCache, getEventsFromCache, storeEventsInCache, cleanupOldCacheEntries, getCachedItem, storeCachedItem } from './storage.js';
 import {standardizeDate, convertTimeToISO, getEndTime, generateEmailContentHash, createBasicEventsFromEmails}  from './utils.js';
@@ -192,22 +192,9 @@ export function registerHandlers() {
                 chrome.storage.local.get(['emails'], async function(result) {
                     const emails = result.emails || [];
                     
-                    // If asking about emails and we have them in storage
-                    if ((userMessage.includes('email') || userMessage.includes('mail') || 
-                         userMessage.includes('message') || userMessage.includes('tell me about')) && 
-                        emails.length > 0) {
-                        
-                        // Generate a fresh summary
-                        const summary = await summarizeEmails(emails);
-                        sendResponse({
-                            reply: summary
-                        });
-                    }
-                    // If asking about emails but we don't have any stored
-                    else if ((userMessage.includes('email') || userMessage.includes('mail') || 
-                             userMessage.includes('message')) && emails.length === 0) {
-                        
-                        // Try to fetch emails first
+                    // If asking about emails
+                    if (emails.length === 0) {
+                        // No emails in storage, fetch them first
                         authenticateUser(async function(token) {
                             try {
                                 const messages = await fetchEmails(token, '10');
@@ -220,28 +207,28 @@ export function registerHandlers() {
                                     await storeEmails(validEmails);
                                     chrome.storage.local.set({ emails: validEmails });
                                     
-                                    // Generate summary
-                                    const summary = await summarizeEmails(validEmails);
+                                    // Process the user's query with the emails
+                                    const answer = await processEmailQuery(request.message, validEmails);
                                     sendResponse({
-                                        reply: summary
+                                        reply: answer
                                     });
                                 } else {
                                     sendResponse({
-                                        reply: "I couldn't find any recent emails. Would you like me to try again?"
+                                        reply: "I couldn't find any recent emails in your inbox. Would you like me to try again?"
                                     });
                                 }
                             } catch (error) {
                                 console.error("Error fetching emails:", error);
                                 sendResponse({
-                                    reply: "I had trouble accessing your emails. Please make sure I have permission to access your Gmail account."
+                                    reply: "I had trouble accessing your emails. Let me try again in a moment."
                                 });
                             }
                         });
-                    }
-                    // For other types of messages
-                    else {
+                    } else {
+                        // We have emails, process the query dynamically
+                        const answer = await processEmailQuery(request.message, emails);
                         sendResponse({
-                            reply: "I'm here to help with your emails! You can ask me about your recent emails, or ask me to look for specific information in them."
+                            reply: answer
                         });
                     }
                 });

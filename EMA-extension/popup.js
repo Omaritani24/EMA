@@ -104,30 +104,8 @@ document.addEventListener('DOMContentLoaded', function() {
         statusMessage.classList.remove('visible');
     }
 
-    // Add initial greeting and immediately fetch emails
-    addMessageToChat("Hi! I'm EMA, your email assistant. Let me fetch your recent emails...", 'bot');
-    
-    // Immediately fetch emails when popup opens
-    chrome.runtime.sendMessage(
-        {action: "getEmails", filter: "10"},
-        function(response) {
-            if (response && response.emails && response.emails.length > 0) {
-                // Generate summary of fetched emails
-                chrome.runtime.sendMessage(
-                    {action: "summarizeEmails", emails: response.emails},
-                    function(summaryResponse) {
-                        if (summaryResponse && summaryResponse.summary) {
-                            addMessageToChat(summaryResponse.summary, 'bot');
-                        } else {
-                            addMessageToChat("I found some emails but couldn't generate a summary. How can I help you with them?", 'bot');
-                        }
-                    }
-                );
-            } else {
-                addMessageToChat("I couldn't find any recent emails. Would you like me to try again?", 'bot');
-            }
-        }
-    );
+    // Add initial greeting
+    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
 
     // Function to handle sending messages
     function sendMessage() {
