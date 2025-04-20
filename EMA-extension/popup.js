@@ -6,14 +6,50 @@ document.addEventListener('DOMContentLoaded', function() {
     const micButton = document.getElementById('mic-button');
     const statusMessage = document.getElementById('status-message');
     const emailFilter = document.getElementById('email-filter');
+    const readFilter = document.getElementById('read-filter');
     const refreshButton = document.getElementById('refresh-emails');
+    const refreshSummaryButton = document.getElementById('refresh-summary');
     const emailSummary = document.getElementById('email-summary');
     const calendarEvents = document.getElementById('calendar-events');
     const refreshEvents = document.getElementById('refresh-events');
 
+    console.log("📅 Popup: DOMContentLoaded - initializing popup");
+
     // Speech recognition setup
     let recognition = null;
     let isListening = false;
+    
+    // Store the currently displayed emails for refresh summary function
+    let currentEmails = null;
+    
+    // Listen for messages from background scripts
+    chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+        // Listen for events updated notification
+        if (request.action === "eventsUpdated" && request.events) {
+            console.log("📅 Events updated notification received, refreshing UI");
+            displayCalendarEvents(request.events);
+        }
+        
+        // Pass through status updates for the summary
+        if (request.action === "updateSummaryStatus") {
+            const statusMessage = request.status || "Processing...";
+            emailSummary.innerHTML = `<p class="summary-loading">${statusMessage}</p>`;
+        }
+    });
+
+    // Initial load - fetch emails and extract events
+    console.log("📅 Popup: Initial fetch of emails");
+    fetchEmails();
+    
+    // Make sure event extraction runs even if fetchEmails doesn't trigger it
+    console.log("📅 Popup: Ensuring calendar events are extracted on load");
+    setTimeout(() => {
+        if (calendarEvents.innerHTML.trim() === '' || 
+            calendarEvents.innerHTML.includes('events-placeholder')) {
+            console.log("📅 Popup: Triggering calendar event extraction manually");
+            extractCalendarEvents(true); // Force refresh on load
+        }
+    }, 1000);
 
     // Check if browser supports speech recognition
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -138,26 +174,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
     sendButton.addEventListener('click', sendMessage);
 
-    // Function to fetch emails based on filter
+    // Function to fetch emails based on filters
     function fetchEmails() {
-        const filterValue = emailFilter.value;
+        const timeFilterValue = emailFilter.value;
+        const readFilterValue = readFilter.value;
         
         // Show loading state
         emailSummary.innerHTML = '<p class="summary-placeholder">Loading emails...</p>';
         calendarEvents.innerHTML = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
         
-        // Request emails from background script with filter
+        // Request emails from background script with filters
         chrome.runtime.sendMessage(
-            {action: "getEmails", filter: filterValue},
+            {
+                action: "getEmails", 
+                timeFilter: timeFilterValue,
+                readFilter: readFilterValue
+            },
             function(response) {
                 if (response && response.emails) {
+                    // Store emails for potential refresh
+                    currentEmails = response.emails;
+                    
                     generateEmailSummary(response.emails);
                     
                     // Process calendar events
                     if (response.events && response.events.length > 0) {
                         displayCalendarEvents(response.events);
                     } else {
-                        extractCalendarEvents();
+                        // Force refresh of calendar events
+                        extractCalendarEvents(true);
                     }
                 } else {
                     emailSummary.innerHTML = '<p class="summary-placeholder">No emails found.</p>';
@@ -168,7 +213,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Function to generate email summary
-    function generateEmailSummary(emails) {
+    function generateEmailSummary(emails, forceRegenerate = false) {
         if (!emails || emails.length === 0) {
             emailSummary.innerHTML = '<p class="summary-placeholder">No emails to summarize.</p>';
             return;
@@ -177,9 +222,19 @@ document.addEventListener('DOMContentLoaded', function() {
         // Show loading state
         emailSummary.innerHTML = '<p class="summary-placeholder">Generating summary...</p>';
         
+        // Get current filter values to check if they've changed
+        const timeFilterValue = emailFilter.value;
+        const readFilterValue = readFilter.value;
+        
         // Send emails to background script for summarization
         chrome.runtime.sendMessage(
-            {action: "summarizeEmails", emails: emails},
+            {
+                action: "summarizeEmails", 
+                emails: emails,
+                timeFilter: timeFilterValue,
+                readFilter: readFilterValue,
+                forceRegenerate: forceRegenerate
+            },
             function(response) {
                 if (response && response.summary) {
                     // Display the summary as text
@@ -192,7 +247,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Function to extract calendar events from emails
-    function extractCalendarEvents() {
+    function extractCalendarEvents(forceRefresh = false) {
+        console.log("📅 Popup: extractCalendarEvents called with forceRefresh =", forceRefresh);
+        
         // Show loading state if not already shown
         const loadingPlaceholder = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
         
@@ -230,20 +287,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // First, sync with Google Calendar to ensure our event statuses are up-to-date
+        console.log("📅 Popup: Sending syncCalendarEvents message");
         chrome.runtime.sendMessage(
             {action: "syncCalendarEvents"},
             function(syncResponse) {
-                console.log("Calendar sync result:", syncResponse);
+                console.log("📅 Popup: Calendar sync result:", syncResponse);
                 
                 // Now request event extraction or use the updated events from sync
                 if (syncResponse && syncResponse.success && syncResponse.events) {
+                    console.log("📅 Popup: Using events from sync response");
                     // Use events returned from sync
                     handleEventsResponse(syncResponse);
                 } else {
+                    console.log("📅 Popup: Fallback to regular event extraction");
                     // Fallback to regular event extraction
                     chrome.runtime.sendMessage(
-                        {action: "extractEvents"},
+                        {action: "extractEvents", forceRefresh: forceRefresh},
                         function(response) {
+                            console.log("📅 Popup: extractEvents response received", response);
                             handleEventsResponse(response);
                         }
                     );
@@ -253,6 +314,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Helper function to handle event response and update UI
         function handleEventsResponse(response) {
+            console.log("📅 Popup: handleEventsResponse called with:", response);
             // Clear loading spinner
             if (refreshButton && window.refreshButtonTimeout) {
                 clearTimeout(window.refreshButtonTimeout);
@@ -267,11 +329,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             if (response && response.events && response.events.length > 0) {
-                console.log(`Displaying ${response.events.length} calendar events`);
+                console.log(`📅 Popup: Displaying ${response.events.length} calendar events`);
                 displayCalendarEvents(response.events);
             } else {
+                console.log("📅 Popup: No calendar events found or error occurred");
                 calendarEvents.innerHTML = '<p class="events-placeholder">No events found in your emails.</p>';
-                console.log("No calendar events found or error occurred");
             }
         }
     }
@@ -568,13 +630,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Set up event listeners for email filtering
     emailFilter.addEventListener('change', fetchEmails);
+    readFilter.addEventListener('change', fetchEmails);
     refreshButton.addEventListener('click', fetchEmails);
     
-    // Set up event listener for refreshing calendar events
-    refreshEvents.addEventListener('click', extractCalendarEvents);
+    // Set up event listener for refreshing summary
+    refreshSummaryButton.addEventListener('click', refreshSummary);
+    
+    // Set up event listeners for buttons
+    if (refreshEvents) {
+        console.log("📅 Popup: Setting up refresh events button listener");
+        refreshEvents.addEventListener('click', function() {
+            console.log("📅 Popup: Refresh events button clicked");
+            extractCalendarEvents(true); // Force refresh when button is clicked
+        });
+    } else {
+        console.warn("📅 Popup: Refresh events button not found");
+    }
 
     // Initial fetch with default filter
     fetchEmails();
+
+    // Function to regenerate summary without using cache
+    function refreshSummary() {
+        if (currentEmails && currentEmails.length > 0) {
+            generateEmailSummary(currentEmails, true);
+        } else {
+            // If no emails are available, fetch them first
+            fetchEmails();
+        }
+    }
 });
 
 function addMessageToChat(text, sender) {

@@ -1,24 +1,50 @@
 // Fetch a list of email message IDs (single batch)
-export function fetchEmails(token, filter = '10') {
-    let maxResults = 20; // Default max results
+export function fetchEmails(token, timeFilter = 'week', readFilter = 'all') {
+    let maxResults = 100; // Default max results
     
-    // Adjust maxResults based on filter
-    if (filter === '10') {
-      maxResults = 10;
-    } else if (filter === '20') {
-      maxResults = 20;
-    } else if (filter === 'all') {
-      maxResults = 100; // Fetch more for "all" option
+    // Build the query based on filters
+    let query = '';
+    
+    // Add time period filter
+    if (timeFilter === 'week') {
+      // Emails from the past 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const formattedDate = sevenDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD
+      query += `after:${formattedDate}`;
+    } else if (timeFilter === 'month') {
+      // Emails from the past 30 days
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const formattedDate = thirtyDaysAgo.toISOString().split('T')[0];
+      query += `after:${formattedDate}`;
+    } else if (timeFilter === 'year') {
+      // Emails from the past 365 days
+      const yearAgo = new Date();
+      yearAgo.setDate(yearAgo.getDate() - 365);
+      const formattedDate = yearAgo.toISOString().split('T')[0];
+      query += `after:${formattedDate}`;
+    }
+    // For 'all', we don't add a time filter
+    
+    // Add read/unread filter
+    if (readFilter === 'unread') {
+      if (query) query += ' ';
+      query += 'is:unread';
+    } else if (readFilter === 'read') {
+      if (query) query += ' ';
+      query += 'is:read';
     }
     
-    // Build the query based on filter
-    let query = '';
-    if (filter === 'unread') {
-      query = 'is:unread';
+    // If timeFilter is all and we want large number of results
+    if (timeFilter === 'all') {
+      maxResults = 200; // Increase max results for 'all' option
     }
     
     // Construct the URL with query parameters
     const url = `https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}${query ? '&q=' + encodeURIComponent(query) : ''}`;
+    
+    console.log(`📧 Fetching emails with query: "${query}", maxResults: ${maxResults}`);
     
     return fetch(url, {
       method: "GET",
@@ -41,7 +67,7 @@ export function fetchEmails(token, filter = '10') {
           return [];
         }
   
-        console.log("✅ Emails fetched:", data.messages);
+        console.log(`✅ Emails fetched: ${data.messages.length}`);
         return data.messages;
       })
       .catch(error => {

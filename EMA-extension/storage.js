@@ -137,26 +137,44 @@ export async function storeSummaryInCache(emails, summary) {
       const db = await initSummaryDB();
       const transaction = db.transaction(['summaries'], 'readwrite');
       const summaryStore = transaction.objectStore('summaries');
+      const hashIndex = summaryStore.index('hash');
       
-      // Create a unique ID
-      const summaryId = 'summary_' + Date.now();
-      
-      summaryStore.put({
-        id: summaryId,
-        hash: contentHash,
-        summary: summary,
-        timestamp: Date.now(),
-        emailCount: emails.length
-      });
+      // Check if a summary with this hash already exists
+      const existingRequest = hashIndex.get(contentHash);
       
       return new Promise((resolve, reject) => {
-        transaction.oncomplete = function() {
-          console.log("✅ Summary stored in cache");
-          resolve();
+        existingRequest.onsuccess = function(event) {
+          const existingSummary = event.target.result;
+          
+          // Create a unique ID or use existing one
+          const summaryId = existingSummary ? existingSummary.id : 'summary_' + Date.now();
+          
+          // Update existing summary or add new one
+          summaryStore.put({
+            id: summaryId,
+            hash: contentHash,
+            summary: summary,
+            timestamp: Date.now(),
+            emailCount: emails.length
+          });
+          
+          transaction.oncomplete = function() {
+            if (existingSummary) {
+              console.log("✅ Updated existing summary in cache");
+            } else {
+              console.log("✅ Added new summary to cache");
+            }
+            resolve();
+          };
+          
+          transaction.onerror = function(event) {
+            console.error("❌ Error storing summary in cache:", event.target.error);
+            reject(event.target.error);
+          };
         };
         
-        transaction.onerror = function(event) {
-          console.error("❌ Error storing summary in cache:", event.target.error);
+        existingRequest.onerror = function(event) {
+          console.error("❌ Error checking for existing summary:", event.target.error);
           reject(event.target.error);
         };
       });
@@ -430,6 +448,13 @@ export async function markEventAsAdded(eventId) {
           if (eventFound) {
             chrome.storage.local.set({ events: updatedEvents }, () => {
               console.log("✅ Updated event in Chrome storage");
+              
+              // Notify UI that events have been updated
+              chrome.runtime.sendMessage({
+                action: "eventsUpdated",
+                events: updatedEvents
+              });
+              
               resolve(true);
             });
           } else {
@@ -460,6 +485,15 @@ export async function markEventAsAdded(eventId) {
           };
           
           transaction.oncomplete = function() {
+            // Get all updated events
+            getEventsFromCache().then(allEvents => {
+              // Notify UI that events have been updated after IndexedDB changes
+              chrome.runtime.sendMessage({
+                action: "eventsUpdated",
+                events: allEvents
+              });
+            });
+            
             resolve(true);
           };
           

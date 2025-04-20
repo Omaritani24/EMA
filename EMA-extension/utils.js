@@ -1,10 +1,50 @@
 // Helper function to standardize date formats
-export function standardizeDate(dateStr) {
+export function standardizeDate(dateStr, referenceDate = null) {
     // Try different date formats
     let date;
     
-    // Use 2025 for dates without a year instead of current year
-    const targetYear = 2025;
+    // Use provided reference date or current date
+    const baseDate = referenceDate ? new Date(referenceDate) : new Date();
+    const targetYear = baseDate.getFullYear();
+    
+    // Check for special keywords
+    if (typeof dateStr === 'string') {
+        const lowerDateStr = dateStr.toLowerCase();
+        
+        // Handle 'tomorrow'
+        if (lowerDateStr.includes('tomorrow')) {
+            const tomorrow = new Date(baseDate);
+            tomorrow.setDate(baseDate.getDate() + 1);
+            return tomorrow.toISOString().split('T')[0];
+        }
+        
+        // Handle 'today'
+        if (lowerDateStr.includes('today')) {
+            return baseDate.toISOString().split('T')[0];
+        }
+        
+        // Handle 'next monday', 'this tuesday', etc.
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        for (let i = 0; i < dayNames.length; i++) {
+            if (lowerDateStr.includes(dayNames[i])) {
+                const targetDay = i;
+                const result = new Date(baseDate);
+                const currentDay = result.getDay();
+                
+                // Calculate days to add
+                let daysToAdd = targetDay - currentDay;
+                if (daysToAdd <= 0) daysToAdd += 7; // Next week if today or past day of week
+                
+                // If it's "next", add a week
+                if (lowerDateStr.includes('next')) {
+                    daysToAdd += 7;
+                }
+                
+                result.setDate(result.getDate() + daysToAdd);
+                return result.toISOString().split('T')[0];
+            }
+        }
+    }
     
     // Check for date formats with only month and day (MM/DD or DD/MM)
     const monthDayRegex = /^(\d{1,2})[\/.-](\d{1,2})$/;
@@ -180,6 +220,22 @@ export function createBasicEventsFromEmails(emails) {
       // Skip if snippet is too short
       if (snippet.length < 10) return;
       
+      // Extract email timestamp to use as reference date for relative dates
+      let emailSentDate = null;
+      if (email.internalDate) {
+        emailSentDate = new Date(parseInt(email.internalDate));
+      } else if (email.payload?.headers) {
+        const dateHeader = email.payload.headers.find(h => h.name.toLowerCase() === 'date');
+        if (dateHeader?.value) {
+          emailSentDate = new Date(dateHeader.value);
+        }
+      }
+      
+      // Use email date if valid, otherwise fall back to current date
+      if (!emailSentDate || isNaN(emailSentDate.getTime())) {
+        emailSentDate = new Date();
+      }
+      
       // Look for dates in the snippet
       const dateMatches = snippet.match(dateRegex);
       if (dateMatches) {
@@ -188,8 +244,8 @@ export function createBasicEventsFromEmails(emails) {
           const timeMatches = snippet.match(timeRegex);
           const time = timeMatches && timeMatches.length > index ? timeMatches[index] : null;
           
-          // Create a standardized date format (YYYY-MM-DD)
-          const standardDate = standardizeDate(dateMatch);
+          // Create a standardized date format (YYYY-MM-DD) using email sent date as reference
+          const standardDate = standardizeDate(dateMatch, emailSentDate);
           
           // Create a title from the words before and after the date
           const words = snippet.split(/\s+/);

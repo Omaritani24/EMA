@@ -7,6 +7,8 @@ import { initSummaryDB, storeEmails, getSummaryFromCache, storeSummaryInCache, g
 import {standardizeDate, convertTimeToISO, getEndTime, generateEmailContentHash, createBasicEventsFromEmails}  from './utils.js';
 
 export function registerHandlers() {
+    console.log("📅 Handlers: Registering message handlers");
+    
     // Trigger authentication and processing on extension installation or startup
     chrome.runtime.onInstalled.addListener(() => {
         authenticateUser(processEmailsAndSummarize);
@@ -19,13 +21,23 @@ export function registerHandlers() {
 
     // Main message listener
     chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+        console.log("📅 Handlers: Received message", request.action);
+        
+        // Pass through status updates to the popup
+        if (request.action === "updateSummaryStatus") {
+            // Forward the message to all open extension pages
+            chrome.runtime.sendMessage(request);
+            return true;
+        }
+        
         if (request.action === "getEmails") {
-            const filter = request.filter || '10';
+            const timeFilter = request.timeFilter || 'week';
+            const readFilter = request.readFilter || 'all';
             
-            // Authenticate and fetch emails with the filter
+            // Authenticate and fetch emails with the filters
             authenticateUser(async function(token) {
                 try {
-                    const messages = await fetchEmails(token, filter);
+                    const messages = await fetchEmails(token, timeFilter, readFilter);
                     
                     // Fetch full content for each message ID
                     let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
@@ -67,8 +79,19 @@ export function registerHandlers() {
             // Get emails from the request
             const emails = request.emails || [];
             
-            // Generate summary using Gemini API (with caching)
-            summarizeEmails(emails).then(summary => {
+            // Get filter values if provided
+            const timeFilter = request.timeFilter || null;
+            const readFilter = request.readFilter || null;
+            
+            // Check if we should force regeneration
+            const forceRegenerate = request.forceRegenerate || false;
+            
+            // Generate summary using Gemini API (with caching logic)
+            summarizeEmails(emails, { 
+                timeFilter: timeFilter,
+                readFilter: readFilter,
+                forceRegenerate: forceRegenerate 
+            }).then(summary => {
                 sendResponse({summary: summary});
             });
             
@@ -77,15 +100,36 @@ export function registerHandlers() {
         
         if (request.action === "extractEvents") {
             // Get emails from the request or from storage
+            const forceRefresh = request.forceRefresh || false;
+            console.log("📅 Handler received extractEvents request, forceRefresh:", forceRefresh);
+            
             if (request.emails && request.emails.length > 0) {
-                extractCalendarEvents(request.emails).then(events => {
+                console.log(`📅 Using ${request.emails.length} emails provided in request`);
+                extractCalendarEvents(request.emails, { forceRefresh }).then(events => {
+                    console.log(`📅 Extracted ${events.length} events, sending response`);
                     sendResponse({events: events});
+                }).catch(error => {
+                    console.error("Error extracting events:", error);
+                    sendResponse({events: [], error: "Failed to extract events"});
                 });
             } else {
+                console.log("📅 No emails in request, getting from storage");
                 chrome.storage.local.get(['emails'], function(result) {
                     const emails = result.emails || [];
-                    extractCalendarEvents(emails).then(events => {
+                    console.log(`📅 Retrieved ${emails.length} emails from storage`);
+                    
+                    if (emails.length === 0) {
+                        console.log("📅 No emails found in storage, returning empty array");
+                        sendResponse({events: []});
+                        return;
+                    }
+                    
+                    extractCalendarEvents(emails, { forceRefresh }).then(events => {
+                        console.log(`📅 Extracted ${events.length} events from storage emails, sending response`);
                         sendResponse({events: events});
+                    }).catch(error => {
+                        console.error("Error extracting events:", error);
+                        sendResponse({events: [], error: "Failed to extract events"});
                     });
                 });
             }
@@ -240,6 +284,7 @@ export function registerHandlers() {
         }
     });
      
+    console.log("📅 Handlers: Message handlers registered successfully");
 }
 
 // Main function to fetch emails, process their content, and summarize them
@@ -248,6 +293,7 @@ async function processEmailsAndSummarize(token) {
       // Run cache cleanup occasionally
       await cleanupOldCacheEntries();
       
+      // Use default values - past week, all emails
       const messages = await fetchEmails(token);
       
       // Fetch full content for each message ID

@@ -542,13 +542,21 @@
 
     <!-- Email selection options -->
     <div class="email-options">
-      <label for="email-filter">Show:</label>
+      <label for="email-filter">Time period:</label>
       <select id="email-filter" class="email-filter">
-        <option value="10">Latest 10 emails</option>
-        <option value="20">Latest 20 emails</option>
-        <option value="unread">Unread emails</option>
-        <option value="all">All recent emails</option>
+        <option value="week">Past week</option>
+        <option value="month">Past month</option>
+        <option value="year">Past year</option>
+        <option value="all">All emails</option>
       </select>
+      
+      <label for="read-filter" style="margin-left: 10px;">Status:</label>
+      <select id="read-filter" class="read-filter">
+        <option value="all">All</option>
+        <option value="unread">Unread only</option>
+        <option value="read">Read only</option>
+      </select>
+      
       <button id="refresh-emails" class="refresh-button">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         Refresh
@@ -557,7 +565,12 @@
 
     <!-- Email Summary Section -->
     <div class="summary-section">
-      <h3>Email Summary</h3>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>Email Summary</h3>
+        <button id="refresh-summary" class="refresh-button" title="Regenerate summary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+        </button>
+      </div>
       <div id="email-summary" class="email-summary-content">
         <p class="summary-placeholder">Loading your email summary...</p>
       </div>
