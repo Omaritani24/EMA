@@ -5,6 +5,7 @@ import { summarizeEmails, extractCalendarEvents, processEmailQuery } from './gem
 import { fetchCalendarEvents, addEventToCalendar, syncCalendarEvents, verifyEventInCalendar } from './calendar.js';
 import { initSummaryDB, storeEmails, getSummaryFromCache, storeSummaryInCache, getEventsFromCache, storeEventsInCache, cleanupOldCacheEntries, getCachedItem, storeCachedItem } from './storage.js';
 import {standardizeDate, convertTimeToISO, getEndTime, generateEmailContentHash, createBasicEventsFromEmails}  from './utils.js';
+import { processAgentRequest, fetchAndStoreEmails, sendEmail as agentSendEmail } from './agent.js';
 
 export function registerHandlers() {
     console.log("📅 Handlers: Registering message handlers");
@@ -230,54 +231,78 @@ export function registerHandlers() {
         
         if (request.action === "processMessage") {
             (async () => {
-                const userMessage = request.message.toLowerCase();
-                
-                // First check if we have emails in storage
-                chrome.storage.local.get(['emails'], async function(result) {
-                    const emails = result.emails || [];
+                try {
+                    // Get context data from storage
+                    const context = await new Promise(resolve => {
+                        chrome.storage.local.get(['pendingEmail', 'knownContacts', 'emails', 'userContext'], result => {
+                            resolve(result);
+                        });
+                    });
                     
-                    // If asking about emails
-                    if (emails.length === 0) {
-                        // No emails in storage, fetch them first
-                        authenticateUser(async function(token) {
+                    const userMessage = request.message.toLowerCase();
+                    
+                    // Handle simple yes/no for pending emails (legacy support)
+                    if (userMessage === "yes" && context.pendingEmail) {
+                        const { to, subject, body } = context.pendingEmail;
+                        
+                        if (!to || !subject || !body) {
+                            sendResponse({ reply: "⚠️ Sorry, I don't have a complete email to send. Try again with more context." });
+                            return;
+                        }
+                        
+                        authenticateUser(async (token) => {
                             try {
-                                const messages = await fetchEmails(token, '10');
-                                let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
-                                const fullEmails = await Promise.all(emailPromises);
-                                const validEmails = fullEmails.filter(email => email !== null);
-                                
-                                if (validEmails.length > 0) {
-                                    // Store the emails
-                                    await storeEmails(validEmails);
-                                    chrome.storage.local.set({ emails: validEmails });
-                                    
-                                    // Process the user's query with the emails
-                                    const answer = await processEmailQuery(request.message, validEmails);
-                                    sendResponse({
-                                        reply: answer
-                                    });
-                                } else {
-                                    sendResponse({
-                                        reply: "I couldn't find any recent emails in your inbox. Would you like me to try again?"
-                                    });
-                                }
-                            } catch (error) {
-                                console.error("Error fetching emails:", error);
-                                sendResponse({
-                                    reply: "I had trouble accessing your emails. Let me try again in a moment."
-                                });
+                                // Use the sendEmail function from agent.js
+                                await agentSendEmail(token, to, subject, body);
+                                chrome.storage.local.remove('pendingEmail');
+                                sendResponse({ reply: `✅ Email sent to ${to}. What else can I help you with?` });
+                            } catch (err) {
+                                sendResponse({ reply: "❌ Failed to send the email. Please try again." });
                             }
                         });
-                    } else {
-                        // We have emails, process the query dynamically
-                        const answer = await processEmailQuery(request.message, emails);
-                        sendResponse({
-                            reply: answer
-                        });
+                        
+                        return;
                     }
-                });
-                
-                return true; // Required for async response
+                    
+                    if (userMessage === "no" && context.pendingEmail) {
+                        chrome.storage.local.remove('pendingEmail');
+                        sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
+                        return;
+                    }
+                    
+                    // Process through the agent
+                    const agentResponse = await processAgentRequest(request.message, context);
+                    
+                    // If agent says we need to fetch emails first
+                    if (agentResponse.needsFetch) {
+                        authenticateUser(async (token) => {
+                            try {
+                                // Fetch emails
+                                const fetchResult = await fetchAndStoreEmails(token);
+                                
+                                // Now that we have emails, process the request again
+                                const newContext = {
+                                    ...context,
+                                    emails: fetchResult.emails,
+                                    knownContacts: fetchResult.contacts
+                                };
+                                
+                                const finalResponse = await processAgentRequest(request.message, newContext);
+                                sendResponse({ reply: finalResponse.reply });
+                            } catch (error) {
+                                console.error("Error fetching emails:", error);
+                                sendResponse({ reply: "I had trouble accessing your emails. Please try again later." });
+                            }
+                        });
+                        return;
+                    }
+                    
+                    // Handle normal responses
+                    sendResponse({ reply: agentResponse.reply });
+                } catch (error) {
+                    console.error("Error in processMessage:", error);
+                    sendResponse({ reply: "Sorry, I encountered an error. Please try again." });
+                }
             })();
             
             return true; // Required for async response
