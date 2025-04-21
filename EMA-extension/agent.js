@@ -6,6 +6,7 @@ import { storeEmails, getCachedItem, storeCachedItem } from './storage.js';
 
 // Constants
 const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+const MAX_CONVERSATION_HISTORY = 10; // Maximum number of conversation turns to remember
 
 /**
  * Main agent function that processes user requests
@@ -14,13 +15,21 @@ const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
  * @returns {Object} - Response with reply and any additional data
  */
 export async function processAgentRequest(userInput, context = {}) {
+  // Get conversation history or initialize it if it doesn't exist
+  const conversationHistory = await getConversationHistory();
+
   // Check if this is a follow-up to a pending email
   const pendingEmail = context.pendingEmail;
   if (pendingEmail && !isYesNoResponse(userInput)) {
     // This might be an edit request for the pending email
     const isEditRequest = await isEmailEditRequest(userInput);
     if (isEditRequest) {
-      return await handleEmailEditRequest(userInput, pendingEmail, context);
+      const response = await handleEmailEditRequest(userInput, pendingEmail, context, conversationHistory);
+      
+      // Add this interaction to history
+      await addToConversationHistory(userInput, response.reply);
+      
+      return response;
     }
   }
 
@@ -29,17 +38,76 @@ export async function processAgentRequest(userInput, context = {}) {
   
   console.log("📌 Agent determined request type:", requestType);
   
+  let response;
   switch (requestType.type) {
     case "send_email":
-      return await handleSendEmailRequest(userInput, context);
+      response = await handleSendEmailRequest(userInput, context, conversationHistory);
+      break;
     
     case "email_question":
-      return await handleEmailQuestion(userInput, context);
+      response = await handleEmailQuestion(userInput, context, conversationHistory);
+      break;
       
     case "conversation":
     default:
-      return await handleConversation(userInput, context);
+      response = await handleConversation(userInput, context, conversationHistory);
+      break;
   }
+  
+  // Add this interaction to history
+  await addToConversationHistory(userInput, response.reply);
+  
+  return response;
+}
+
+/**
+ * Get the conversation history from storage
+ */
+async function getConversationHistory() {
+  return new Promise(resolve => {
+    chrome.storage.local.get(['conversationHistory'], result => {
+      resolve(result.conversationHistory || []);
+    });
+  });
+}
+
+/**
+ * Add a new interaction to the conversation history
+ */
+async function addToConversationHistory(userMessage, agentResponse) {
+  const conversationHistory = await getConversationHistory();
+  
+  // Create a new entry
+  const newEntry = {
+    timestamp: Date.now(),
+    user: userMessage,
+    agent: agentResponse
+  };
+  
+  // Add to the start of the array (newest first)
+  const updatedHistory = [newEntry, ...conversationHistory].slice(0, MAX_CONVERSATION_HISTORY);
+  
+  // Store the updated history
+  chrome.storage.local.set({ conversationHistory: updatedHistory });
+  
+  return updatedHistory;
+}
+
+/**
+ * Format conversation history for inclusion in prompts
+ */
+function formatConversationHistory(history, maxTurns = 5) {
+  if (!history || history.length === 0) {
+    return "";
+  }
+  
+  // Take the most recent messages, up to maxTurns
+  const recentHistory = history.slice(0, maxTurns);
+  
+  // Format them from oldest to newest
+  return recentHistory.reverse().map(entry => {
+    return `User: ${entry.user}\nAssistant: ${entry.agent}`;
+  }).join('\n\n');
 }
 
 /**
@@ -62,9 +130,12 @@ async function isEmailEditRequest(userInput) {
 /**
  * Handle a request to edit a pending email
  */
-async function handleEmailEditRequest(userInput, pendingEmail, context) {
+async function handleEmailEditRequest(userInput, pendingEmail, context, conversationHistory) {
   const { to, subject, body } = pendingEmail;
-  const { knownContacts = [] } = context;
+  
+  // Format conversation history for context
+  const historyText = formatConversationHistory(conversationHistory);
+  const hasHistory = historyText.length > 0;
   
   try {
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
@@ -79,6 +150,8 @@ async function handleEmailEditRequest(userInput, pendingEmail, context) {
     Subject: ${subject}
     Body:
     ${body}
+    
+    ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
     
     Please rewrite the email based on the user's request. Only change what's necessary to fulfill the request.
     Keep the recipient the same, but you may adjust the subject and body.
@@ -230,7 +303,7 @@ async function determineRequestType(userInput) {
 /**
  * Handle requests to send an email
  */
-async function handleSendEmailRequest(userInput, context) {
+async function handleSendEmailRequest(userInput, context, conversationHistory) {
   const { knownContacts = [] } = context;
   
   let contactLines = "";
@@ -240,6 +313,10 @@ async function handleSendEmailRequest(userInput, context) {
   } else {
     contactLines = "- someone@example.com";
   }
+
+  // Format conversation history for context
+  const historyText = formatConversationHistory(conversationHistory);
+  const hasHistory = historyText.length > 0;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
@@ -262,7 +339,8 @@ async function handleSendEmailRequest(userInput, context) {
     Known contacts:
     ${contactLines}
     
-    User said: "${userInput}"
+    ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
+    User's current request: "${userInput}"
     `;
     
     const res = await fetch(url, {
@@ -306,8 +384,12 @@ async function handleSendEmailRequest(userInput, context) {
 /**
  * Handle questions about emails
  */
-async function handleEmailQuestion(userInput, context) {
+async function handleEmailQuestion(userInput, context, conversationHistory) {
   const { emails = [] } = context;
+  
+  // Format conversation history for context
+  const historyText = formatConversationHistory(conversationHistory);
+  const hasHistory = historyText.length > 0;
   
   // If we don't have emails yet, fetch them
   if (emails.length === 0) {
@@ -342,7 +424,8 @@ async function handleEmailQuestion(userInput, context) {
     If asked for summaries, focus on the most important information.
     If asked about senders, recipients, or dates, extract that information accurately.
     
-    User's question: "${userInput}"
+    ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
+    User's current question: "${userInput}"
     
     Emails to analyze:
     ${formattedEmails}
@@ -374,16 +457,22 @@ async function handleEmailQuestion(userInput, context) {
 /**
  * Handle general conversation
  */
-async function handleConversation(userInput, context) {
+async function handleConversation(userInput, context, conversationHistory) {
   try {
-    // Check cache for this conversation
+    // Check cache for this conversation first (for efficiency)
     const cacheKey = `chat_${generateEmailContentHash([{snippet: userInput}])}`;
     const cachedResponse = await getCachedItem(cacheKey);
     
-    if (cachedResponse) {
+    // Only use cache if it's a simple query without much context dependency
+    const isSimpleQuery = userInput.length < 20 && !containsReferenceTerms(userInput);
+    if (cachedResponse && isSimpleQuery) {
       console.log("🎯 Using cached chat response");
       return { reply: cachedResponse };
     }
+    
+    // Format conversation history for context
+    const historyText = formatConversationHistory(conversationHistory);
+    const hasHistory = historyText.length > 0;
     
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
     
@@ -394,11 +483,11 @@ async function handleConversation(userInput, context) {
     Important language rules:
     - Keep responses friendly and natural in the appropriate language
     - Keep all email analysis functionality working as normal
+    - Maintain continuity with previous parts of the conversation
+    - If the user refers to something mentioned earlier, answer based on that context
     
-    Context:
-    The user message is not asking about emails specifically. This is just a normal conversation.
-    
-    User message: ${userInput}
+    ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
+    User's current message: ${userInput}
     `;
     
     const response = await fetch(url, {
@@ -424,14 +513,24 @@ async function handleConversation(userInput, context) {
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 
                 "I couldn't process that. Please try again.";
     
-    // Cache the response
-    await storeCachedItem(cacheKey, reply);
+    // Only cache simple responses that don't depend heavily on context
+    if (isSimpleQuery) {
+      await storeCachedItem(cacheKey, reply);
+    }
     
     return { reply };
   } catch (error) {
     console.error("Error in conversation processing:", error);
     return { reply: "Sorry, I encountered an error processing your message." };
   }
+}
+
+/**
+ * Check if the message contains terms that likely refer to previous context
+ */
+function containsReferenceTerms(message) {
+  const referenceTerms = /it|that|they|them|those|these|this|their|he|she|him|her|his|previous|earlier|before|mentioned|said|told|asked|you said|you mentioned|we discussed/i;
+  return referenceTerms.test(message);
 }
 
 /**
