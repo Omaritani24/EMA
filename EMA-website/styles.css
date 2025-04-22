@@ -264,19 +264,24 @@ nav {
 
 .features-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 3rem;
-    margin-top: 5rem;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    width: 100%;
+    max-width: 1200px;
 }
+
+
 
 .feature-card {
     background-color: var(--bg-color);
-    padding: 3rem;
-    border-radius: var(--radius);
+    padding: 2rem; /* smaller padding */
+    border-radius: var(--radius-sm); /* slightly smaller corners */
     box-shadow: var(--shadow-sm);
     transition: var(--transition);
     border: 1px solid var(--bg-light);
+    font-size: 0.9rem; /* shrink text slightly */
 }
+
 
 .feature-card:hover {
     transform: translateY(-8px);
@@ -286,8 +291,8 @@ nav {
 
 .feature-icon {
     background-color: var(--bg-light);
-    width: 64px;
-    height: 64px;
+    width: 48px;
+    height: 48px;
     border-radius: 16px;
     display: flex;
     align-items: center;
@@ -296,7 +301,7 @@ nav {
 }
 
 .feature-icon img {
-    width: 32px;
+    width: 24px;
 }
 
 .feature-card h3 {
@@ -541,18 +546,27 @@ nav {
 
 /* Pricing Section */
 .pricing {
-    background-color: var(--bg-light);
-    padding-top: 10rem;
+    min-height: 100vh; /* allows scrolling if needed */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem 1rem;
+    box-sizing: border-box;
 }
 
+
+
 .pricing-cards {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    width: 100%;
     max-width: 1200px;
-    margin: 4rem auto 0;
+    justify-content: center;
+    align-items: stretch;
 }
+
 
 .pricing-card {
     background-color: var(--bg-color);
@@ -984,3 +998,83 @@ footer {
     width: 100%;
     margin-top: 1rem;
 } 
+
+.features .subheading {
+    display: block;
+    text-align: center;
+    font-weight: 800;                /* Make it bolder */
+    color: #e91e63;                  /* Change color to pink (or use any hex) */
+    font-size: 1.25rem;              /* Optional: larger size */
+    margin-bottom: 1rem;
+    text-transform: uppercase;       /* Optional: all caps */
+    letter-spacing: 0.5px;
+}
+
+
+.showcase .subheading {
+    display: block;
+    text-align: center;
+    font-weight: 800;
+    color: #00bcd4; /* Teal from logo */
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.how-it-works .subheading {
+    display: block;
+    text-align: center;
+    font-weight: 800;
+    color: #7b61ff; /* Soft purple from logo */
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.faq .subheading {
+    display: block;
+    text-align: center;
+    font-weight: 800;
+    color: #4af0be; /* Soft purple from logo */
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.pricing .subheading {
+    display: block;
+    text-align: center;
+    font-weight: 800;
+    color: #ff61b0; /* Soft purple from logo */
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.section-divider {
+    height: 100px;
+    background: linear-gradient(to bottom, rgba(0, 113, 227, 0.1), transparent);
+    margin: -50px 0 50px 0;
+}
+section {
+    scroll-snap-align: start;
+    scroll-margin-top: 60px;
+}
+
+html {
+    scroll-behavior: smooth;
+    scroll-snap-type: y mandatory;
+}
+.features {
+    height: 100vh;              /* Use full screen height */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem 1rem;         /* Reduce padding */
+    box-sizing: border-box;
+}
+.features-header-wrapper {
+    margin-bottom: 3rem;
+}
