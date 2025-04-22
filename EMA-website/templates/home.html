@@ -26,8 +26,9 @@
             </ul>
             <div class="cta-buttons">
                 <span style="font-weight: 500; color: var(--primary-color); margin-right: 1rem;">
-                    Hello, {{ user.full_name }}!
-                </span>
+                    {{ user.full_name }}
+                </span> 
+                <div class="profile-circle">{{ user.full_name[0] }}</div>
                 <a href="{{ url_for('logout') }}" class="button secondary-button">Logout</a>
             </div>
             
@@ -45,7 +46,8 @@
             <div class="hero-content">
                 <span class="overline">Introducing</span>
                 <h1>A smarter way to manage your email</h1>
-                <p>EMA uses artificial intelligence to summarize emails, extract calendar events, and help you respond faster—all right within your inbox.</p>
+                <p><p>Hi {{ user.full_name.split(' ')[0] }}, EMA is ready to summarize your emails and boost your productivity today!</p>
+            </p>
                 <div class="hero-cta">
                     <a href="#" class="button primary-button">Add to Chrome</a>
                 </div>
@@ -54,47 +56,9 @@
                 <img src="images/hero-image.png" alt="EMA in action">
             </div>
         </section>
+       
 
   
-
-        <section id="features" class="features">
-            <div class="features-header-wrapper"></div>
-            <div class="features-header">
-                <span class="subheading">Features</span>
-                <h2>Everything you need to master your inbox</h2>
-            </div>
-
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <img src="images/summary-icon.svg" alt="Summary icon">
-                    </div>
-                    <h3>Smart Summaries</h3>
-                    <p>Get concise, AI-generated summaries of your emails at a glance, so you can quickly understand what matters.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <img src="images/calendar-icon.svg" alt="Calendar icon">
-                    </div>
-                    <h3>Calendar Integration</h3>
-                    <p>EMA automatically detects dates, times, and events in your emails and lets you add them to your calendar with a single click.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <img src="images/chat-icon.svg" alt="Chat icon">
-                    </div>
-                    <h3>AI Chat Assistant</h3>
-                    <p>Ask questions about your emails and get instant answers. No more searching through endless threads to find what you need.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <img src="images/reply-icon.svg" alt="Reply icon">
-                    </div>
-                    <h3>Smart Replies</h3>
-                    <p>Let EMA draft context-aware responses or compose new emails for you based on your communication style.</p>
-                </div>
-            </div>
-        </section>
  
     <div class="section-divider"></div>
     
@@ -113,33 +77,6 @@
             </div>
         </section>
   
-    <div class="section-divider"></div>
-   
-    
-        <section id="how-it-works" class="how-it-works">
-            <div class="section-header">
-                <span class="subheading">Simple Setup</span>
-                <h2>Start using EMA in minutes</h2>
-                <p>Getting started with EMA is easy and straightforward. You'll be managing emails more efficiently in no time.</p>
-            </div>
-            <div class="steps">
-                <div class="step">
-                    <div class="step-number">1</div>
-                    <h3>Install the Extension</h3>
-                    <p>Add EMA to Chrome with a single click from the Chrome Web Store.</p>
-                </div>
-                <div class="step">
-                    <div class="step-number">2</div>
-                    <h3>Connect Your Email</h3>
-                    <p>Securely connect your email account with our privacy-first approach.</p>
-                </div>
-                <div class="step">
-                    <div class="step-number">3</div>
-                    <h3>Enjoy the Benefits</h3>
-                    <p>Let EMA handle your email workflow while you focus on what matters.</p>
-                </div>
-            </div>
-        </section>
 
 
     <div class="section-divider"></div>
