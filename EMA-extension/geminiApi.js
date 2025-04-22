@@ -599,3 +599,75 @@ export async function summarizeWithGemini(prompt) {
     return null;
   }
 }
+export async function interpretUserMessage(message) {
+  const today = new Date().toISOString().split('T')[0]; // e.g., "2025-05-02"
+  const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+  const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+
+  const prompt = `
+Today’s date is ${today}.
+
+You're EMA, a smart assistant. When the user wants to create a calendar event, extract the intent and return structured JSON like:
+
+{
+  "intent": "create_event",
+  "reply": "Got it! I'm adding the event to your calendar.",
+  "eventDetails": {
+    "title": "Call with Alex",
+    "date": "2025-05-03",
+    "time": "15:00"
+  }
+}
+
+If it's not a calendar request, respond like:
+
+{
+  "reply": "Here's your regular response."
+}
+
+User: "${message}"
+`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 300,
+      topP: 0.8,
+      topK: 40,
+    }
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json(); // ✅ NOW data is defined
+
+    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    console.log("🧠 Raw Gemini reply:", raw);
+
+    // Clean the response string
+    // Extract clean JSON block only
+const firstBrace = raw.indexOf('{');
+const lastBrace = raw.lastIndexOf('}');
+const jsonBlock = raw.slice(firstBrace, lastBrace + 1);
+
+// Optional: remove comments inside
+const jsonClean = jsonBlock.replace(/\/\/.*$/gm, '').trim();
+
+// Parse the cleaned JSON block
+const parsed = JSON.parse(jsonClean);
+
+
+    
+    return parsed;
+
+  } catch (err) {
+    console.error("❌ Failed to parse Gemini reply:", err);
+    return { reply: "Sorry, I couldn’t understand your request." };
+  }
+}

@@ -172,24 +172,53 @@ document.addEventListener('DOMContentLoaded', function() {
     // Function to handle sending messages
     function sendMessage() {
         const message = chatInput.value.trim();
-        if (message) {
-            // Add user message to chat
-            addMessageToChat(message, 'user');
-            
-            // Clear input
-            chatInput.value = '';
-            
-            // Send to background script for processing
-            chrome.runtime.sendMessage(
-                {action: "processMessage", message: message},
-                function(response) {
-                    if (response && response.reply) {
-                        addMessageToChat(response.reply, 'bot');
+        if (!message) return;
+    
+        // Add user message to chat
+        addMessageToChat(message, 'user');
+        chatInput.value = '';
+    
+        // Send to background for Gemini processing
+        chrome.runtime.sendMessage(
+            { action: "processMessage", message: message },
+            async function(response) {
+                if (!response) {
+                    addMessageToChat("Something went wrong.", 'bot');
+                    return;
+                }
+    
+                // Show Gemini's reply regardless
+                if (response.reply) {
+                    addMessageToChat(response.reply, 'bot');
+                }
+    
+                // If Gemini says this is a calendar event, create it
+                if (response.intent === "create_event" && response.eventDetails) {
+                    console.log("📅 Detected event intent:", response.eventDetails);
+                    
+                    const success = await createEventFromDetails(response.eventDetails);
+                    if (success) {
+                        addMessageToChat(`✅ I added "${response.eventDetails.title}" to your calendar.`, 'bot');
+                    } else {
+                        addMessageToChat(`❌ I tried to add the event but ran into a problem.`, 'bot');
                     }
                 }
-            );
-        }
+            }
+        );
     }
+    async function createEventFromDetails(details) {
+        return new Promise((resolve) => {
+          chrome.runtime.sendMessage(
+            { action: "createCalendarEvent", event: details },
+            (response) => {
+              console.log("📬 Response from background:", response);
+              resolve(response?.success || false);
+            }
+          );
+        });
+      }
+      
+        
 
     // Set up chat input listeners
     chatInput.addEventListener('keypress', function(e) {

@@ -6,6 +6,7 @@ import { fetchCalendarEvents, addEventToCalendar, syncCalendarEvents, verifyEven
 import { initSummaryDB, storeEmails, getSummaryFromCache, storeSummaryInCache, getEventsFromCache, storeEventsInCache, cleanupOldCacheEntries, getCachedItem, storeCachedItem } from './storage.js';
 import {standardizeDate, convertTimeToISO, getEndTime, generateEmailContentHash, createBasicEventsFromEmails}  from './utils.js';
 import { processAgentRequest, fetchAndStoreEmails, sendEmail as agentSendEmail } from './agent.js';
+import { interpretUserMessage } from './geminiApi.js';
 
 export function registerHandlers() {
     console.log("📅 Handlers: Registering message handlers");
@@ -240,6 +241,56 @@ export function registerHandlers() {
                     });
                     
                     const userMessage = request.message.toLowerCase();
+                    // 🧠 Step 1: Interpret calendar intent with Gemini
+const interpreted = await interpretUserMessage(request.message);
+console.log("🧠 Calendar interpretation:", JSON.stringify(interpreted, null, 2));
+
+if (interpreted?.intent === "create_event" && interpreted?.eventDetails) {
+    console.log("📅 Detected event intent:", interpreted.eventDetails);
+  
+    const { title, date, time, location } = interpreted.eventDetails;
+  
+    // Validate
+    if (!title || !date || !time) {
+      console.warn("❌ Missing required fields:", interpreted.eventDetails);
+      sendResponse({
+        reply: "❌ I couldn’t add your event because something is missing (title, date, or time).",
+        success: false
+      });
+      return;
+    }
+  
+    const event = {
+      title,
+      date,
+      time,
+      location: location || "",
+      description: interpreted.eventDetails.description || ""
+    };
+  
+    console.log("📤 Sending to addEventToCalendar:", event);
+  
+    authenticateUser(async (token) => {
+      try {
+        const result = await addEventToCalendar(token, event);
+  
+        sendResponse({
+          reply: interpreted.reply || `✅ Added "${title}" to your calendar.`,
+          success: true
+        });
+      } catch (err) {
+        console.error("❌ Failed to create event:", err);
+        sendResponse({
+          reply: "❌ I understood your request but couldn’t add it to your calendar.",
+          success: false
+        });
+      }
+    });
+  
+    return; // Ensure async sendResponse works
+  }
+  
+
                     
                     // Handle simple yes/no for pending emails (legacy support)
                     if (userMessage === "yes" && context.pendingEmail) {
@@ -269,7 +320,7 @@ export function registerHandlers() {
                         sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
                         return;
                     }
-                    
+                  
                     // Process through the agent
                     const agentResponse = await processAgentRequest(request.message, context);
                     
