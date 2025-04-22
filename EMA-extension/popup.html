@@ -15,14 +15,19 @@
     }
  
     body {
-      height: 700px;
-      width: 500px;
-      background: linear-gradient(135deg, #6366f1, #a855f7, #ec4899); /* Updated gradient to match logo */
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      color: #333;
-    }
+  height: 700px;
+  width: 500px;
+  background: linear-gradient(-45deg, #b0cfe6, #ea98f1, #8cc9ac, #f0bdd7);
+  background-size: 400% 400%;
+  animation: animatedGradient 12s ease infinite;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #222;
+  font-family: "Poppins", sans-serif;
+}
+
+
 
     /* Main container for all content */
     .container {
@@ -62,7 +67,7 @@
     .header h1 {
       font-size: 1.8rem;
       margin-bottom: 8px;
-      color: #fff;
+      color: #b1aaaa;
       text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
       background: linear-gradient(90deg, #6366f1, #ec4899);
       -webkit-background-clip: text;
@@ -74,7 +79,7 @@
 
     .header p {
       font-size: 1rem;
-      color: #fff;
+      color: #4b4b4b;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
       font-weight: 300;
     }
@@ -120,7 +125,7 @@
     
     .email-filter:focus {
       border-color: #6366f1;
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+      box-shadow: 0 0 0 2px rgba(110, 231, 215, 0.2);
       outline: none;
     }
 
@@ -138,7 +143,7 @@
       color: white;
       transition: all 0.3s ease;
       border-radius: 8px;
-      box-shadow: 0 2px 5px rgba(99, 102, 241, 0.3);
+      box-shadow: 0 2px 5px rgba(99, 241, 158, 0.3);
       white-space: nowrap;
     }
 
@@ -468,7 +473,7 @@
     }
 
     .chat-header {
-      background: linear-gradient(90deg, #6366f1, #ec4899);
+      background: linear-gradient(90deg,  #67e983,#9193f3, #e476ad,#67e983);
       color: white;
       padding: 14px 18px;
       font-size: 1.1rem;
@@ -673,7 +678,20 @@
       transform: translateY(-2px);
       box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
     }
+    @keyframes animatedGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
   </style>
+
 </head>
 <body>
   <div class="container">
