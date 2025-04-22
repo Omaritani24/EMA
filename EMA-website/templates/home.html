@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EMA - Enhanced Mail Assistant</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
     <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
@@ -24,9 +25,13 @@
                 <li><a href="#pricing">Pricing</a></li>
             </ul>
             <div class="cta-buttons">
-                <a href="#" class="button secondary-button">Sign In</a>
-                <a href="#" class="button primary-button">Get EMA</a>
+                <span style="font-weight: 500; color: var(--primary-color); margin-right: 1rem;">
+                    Hello, {{ user.username.split('@')[0].capitalize() }}!
+                </span>
+                <a href="{{ url_for('logout') }}" class="button secondary-button">Logout</a>
             </div>
+            
+            
             <div class="hamburger">
                 <span></span>
                 <span></span>
