@@ -169,8 +169,15 @@ nav {
 
 .cta-buttons {
     display: flex;
+    align-items: center;
     gap: 1rem;
 }
+
+.cta-buttons span {
+    font-weight: 500;
+    color: var(--primary-color);
+}
+
 
 .hamburger {
     display: none;
