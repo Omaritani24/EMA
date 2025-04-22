@@ -6,16 +6,18 @@
     <title>EMA - Enhanced Mail Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 
-    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32x32.png') }}">
+<link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='images/favicon-16x16.png') }}">
+
     <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <header>
         <nav>
             <div class="logo">
-                <img src="images/logo.png" alt="EMA Logo" id="logo">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="EMA Logo" id="logo">
+
                 <span>EMA</span>
             </div>
             <ul class="nav-links">
@@ -53,8 +55,8 @@
                 </div>
             </div>
             <div class="hero-image">
-                <img src="images/hero-image.png" alt="EMA in action">
-            </div>
+                <img src="{{ url_for('static', filename='images/hero-image.png') }}" alt="EMA in action">
+
         </section>
        
 
@@ -70,7 +72,8 @@
                 <p>EMA integrates seamlessly with your email workflow, offering powerful features without compromising the user experience.</p>
             </div>
             <div class="demo-video">
-                <img src="images/demo-placeholder.jpg" alt="EMA demo" class="video-placeholder">
+                <img src="{{ url_for('static', filename='images/demo-placeholder.jpg') }}" alt="EMA demo" class="video-placeholder">
+
                 <div class="play-button">
                     <i class="fas fa-play"></i>
                 </div>
@@ -183,7 +186,8 @@
         <div class="footer-grid">
             <div class="footer-column">
                 <div class="footer-logo">
-                    <img src="images/logo.png" alt="EMA Logo">
+                    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="EMA Logo">
+
                     <span>EMA</span>
                 </div>
                 <p>Enhanced Mail Assistant - Your AI-powered email companion for a more productive inbox.</p>
