@@ -51,8 +51,10 @@
                 <p><p>Hi {{ user.full_name.split(' ')[0] }}, EMA is ready to summarize your emails and boost your productivity today!</p>
             </p>
                 <div class="hero-cta">
-                    <a href="/download-extension" class="button primary-button">Download EMA Chrome Extension</a>
-
+                    <a href="{{ url_for('static', filename='EMA-extension.zip') }}" download class="button primary-button">
+                        Download EMA Chrome Extension
+                      </a>
+                      
 
 
 <p style="margin-top: 10px; font-size: 14px;">

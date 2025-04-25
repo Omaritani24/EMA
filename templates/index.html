@@ -50,8 +50,17 @@
                 <h1>A smarter way to manage your email</h1>
                 <p>EMA uses artificial intelligence to summarize emails, extract calendar events, and help you respond faster—all right within your inbox.</p>
                 <div class="hero-cta">
-                    <a href="/download-extension" class="button primary-button">Download EMA Chrome Extension</a>
-
+                    <a href="{{ url_for('static', filename='EMA-extension.zip') }}" download class="button primary-button">
+                        Download EMA Chrome Extension
+                      </a>
+                      <p style="margin-top: 10px; font-size: 14px;">
+                        <strong>How to install:</strong><br>
+                        1. Download and unzip the extension<br>
+                        2. Go to <code>chrome://extensions/</code><br>
+                        3. Enable <strong>Developer mode</strong> (top right)<br>
+                        4. Click “Load Unpacked” and select the unzipped folder
+                      </p>
+                      
                 </div>
             </div>
             <div class="hero-image">
