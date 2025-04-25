@@ -2,11 +2,69 @@
 import { authenticateUser } from './auth.js';
 import { fetchEmails, fetchEmailContent } from './gmailApi.js';
 import { generateEmailContentHash } from './utils.js';
-import { storeEmails, getCachedItem, storeCachedItem } from './storage.js';
+import { storeEmails, getCachedItem, storeCachedItem, storeContactsInDB, getContactsFromDB, searchContactsByNameInDB, lookupContactInDB } from './storage.js';
 
 // Constants
 const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
 const MAX_CONVERSATION_HISTORY = 10; // Maximum number of conversation turns to remember
+
+/**
+ * Get user's identity information
+ * @param {string} token - OAuth token for authentication
+ * @returns {Promise<Object>} - User's profile information
+ */
+async function getUserProfile(token) {
+  try {
+    const response = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error("❌ Error fetching user profile:", data.error.message);
+      return { email: "", name: "" };
+    }
+    
+    // Gmail API only provides email, try to get name from People API
+    const nameResponse = await fetch(
+      "https://people.googleapis.com/v1/people/me?personFields=names", 
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+    
+    const nameData = await nameResponse.json();
+    let name = "";
+    
+    if (!nameData.error && nameData.names && nameData.names.length > 0) {
+      name = nameData.names[0].displayName || "";
+    } else {
+      // If we can't get name from People API, extract from email
+      name = data.emailAddress ? data.emailAddress.split("@")[0] : "";
+      // Capitalize first letter of each word
+      name = name.split(/[._-]/).map(word => 
+        word.charAt(0).toUpperCase() + word.slice(1)
+      ).join(" ");
+    }
+    
+    return {
+      email: data.emailAddress || "",
+      name: name
+    };
+  } catch (error) {
+    console.error("❌ Error fetching user profile:", error);
+    return { email: "", name: "" };
+  }
+}
 
 /**
  * Main agent function that processes user requests
@@ -133,6 +191,20 @@ async function isEmailEditRequest(userInput) {
 async function handleEmailEditRequest(userInput, pendingEmail, context, conversationHistory) {
   const { to, subject, body } = pendingEmail;
   
+  // Get the user's profile information
+  let userProfile = { name: "", email: "" };
+  try {
+    // Get token to fetch user profile
+    userProfile = await new Promise((resolve) => {
+      authenticateUser(async (token) => {
+        const profile = await getUserProfile(token);
+        resolve(profile);
+      });
+    });
+  } catch (error) {
+    console.error("Error getting user profile:", error);
+  }
+  
   // Format conversation history for context
   const historyText = formatConversationHistory(conversationHistory);
   const hasHistory = historyText.length > 0;
@@ -153,14 +225,19 @@ async function handleEmailEditRequest(userInput, pendingEmail, context, conversa
     
     ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
     
+    Sender's information:
+    Name: ${userProfile.name || "User"}
+    Email: ${userProfile.email || "user@example.com"}
+    
     Please rewrite the email based on the user's request. Only change what's necessary to fulfill the request.
     Keep the recipient the same, but you may adjust the subject and body.
+    Make sure the email ends with a personalized signature using the sender's name.
     
     Follow this format exactly:
     To: [same recipient]
     Subject: [modified subject if needed]
     Body:
-    [modified body]
+    [modified body with personalized signature]
     `;
     
     const res = await fetch(url, {
@@ -304,7 +381,8 @@ async function determineRequestType(userInput) {
  * Handle requests to send an email
  */
 async function handleSendEmailRequest(userInput, context, conversationHistory) {
-  const { knownContacts = [] } = context;
+  // Fetch contacts directly from the database instead of using context
+  const knownContacts = await getContactsFromDB();
   
   let contactLines = "";
   
@@ -312,6 +390,54 @@ async function handleSendEmailRequest(userInput, context, conversationHistory) {
     contactLines = knownContacts.map(([name, email]) => `- ${name}: ${email}`).join('\n');
   } else {
     contactLines = "- someone@example.com";
+  }
+
+  // Extract potential recipient from user input
+  const recipientMatch = userInput.match(/(?:email|send|write|message)(?:\s+(?:to|for))?\s+([^,\.]+)/i);
+  let matchedContact = null;
+  
+  if (recipientMatch && recipientMatch[1]) {
+    const potentialRecipient = recipientMatch[1].trim();
+    
+    // Try to find matching contacts by name using DB search
+    const matchingContacts = await searchContactsByNameInDB(potentialRecipient);
+    
+    if (matchingContacts && matchingContacts.length > 0) {
+      // Use the first match
+      matchedContact = matchingContacts[0];
+    } else {
+      // Try email lookup if name search failed
+      if (potentialRecipient.includes('@')) {
+        const contactByEmail = await lookupContactInDB(potentialRecipient);
+        if (contactByEmail) {
+          matchedContact = contactByEmail;
+        }
+      } else {
+        // Fall back to manual search through all contacts if DB search methods failed
+        for (const contact of knownContacts) {
+          const [name, email] = contact;
+          if (name.toLowerCase().includes(potentialRecipient.toLowerCase()) || 
+              email.toLowerCase().includes(potentialRecipient.toLowerCase())) {
+            matchedContact = contact;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Get the user's profile information
+  let userProfile = { name: "", email: "" };
+  try {
+    // Get token to fetch user profile
+    userProfile = await new Promise((resolve) => {
+      authenticateUser(async (token) => {
+        const profile = await getUserProfile(token);
+        resolve(profile);
+      });
+    });
+  } catch (error) {
+    console.error("Error getting user profile:", error);
   }
 
   // Format conversation history for context
@@ -325,19 +451,25 @@ async function handleSendEmailRequest(userInput, context, conversationHistory) {
     You are an email assistant. You MUST generate a professional email based on the user's request.
     
     1. ONLY use the contacts listed below.
-    2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email  "
+    2. Do NOT invent contacts. If no match, clearly say "Contact not found", and ask for email.
     3. The subject and body should directly reflect what the user asked.
-    4. the email should be professional and well written, and a proper length.
-    5. sign it with the users name from the email that you are sending from.(do not write sent from)
-    6. Follow this format exactly:
+    4. The email should be professional and well written, and a proper length.
+    5. Sign it with the sender's name at the end of the email. ALWAYS include the sender's name.
+    6. Make the email feel personal by using the sender's name in the signature.
+    7. Follow this format exactly:
     
     To: [recipient@example.com]  
     Subject: [email subject]  
     Body:  
-    [email message]
+    should be a proper email message, ending with a personalized signature using the sender's name.
     
     Known contacts:
     ${contactLines}
+    ${matchedContact ? `\nBased on the user's request, they are likely trying to email: ${matchedContact[0]} (${matchedContact[1]})` : ''}
+    
+    Sender's information:
+    Name: ${userProfile.name || "User"}
+    Email: ${userProfile.email || "user@example.com"}
     
     ${hasHistory ? `Recent conversation history:\n${historyText}\n\n` : ''}
     User's current request: "${userInput}"
@@ -346,11 +478,24 @@ async function handleSendEmailRequest(userInput, context, conversationHistory) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      body: JSON.stringify({ 
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 800
+        }
+      })
     });
 
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "⚠️ Couldn't generate an email.";
+
+    if (text.includes("Contact not found")) {
+      // Handle case where contact wasn't found
+      return {
+        reply: "I couldn't find that contact in your address book. Could you provide their email address or clarify who you'd like to email?"
+      };
+    }
 
     const toMatch = text.match(/To:\s*(.*)/i);
     const subjectMatch = text.match(/Subject:\s*(.*)/i);
@@ -366,13 +511,21 @@ async function handleSendEmailRequest(userInput, context, conversationHistory) {
     const subject = subjectMatch[1].trim();
     const body = bodyMatch[1].trim();
     
+    // Include the sender's name in the email object
+    const emailData = { 
+      to, 
+      subject, 
+      body,
+      fromName: userProfile.name || "User" // Store the sender's name with the email
+    };
+    
     // Store in pendingEmail for confirmation
     chrome.storage.local.set({
-      pendingEmail: { to, subject, body }
+      pendingEmail: emailData
     });
 
     return {
-      reply: `Here's your email:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`,
+      reply: `Here's your email from ${emailData.fromName}:\n\nTo: ${to}\nSubject: ${subject}\n\n${body}\n\nDo you want to send this? (Yes/No)`,
       needsConfirmation: true
     };
   } catch (err) {
@@ -459,17 +612,6 @@ async function handleEmailQuestion(userInput, context, conversationHistory) {
  */
 async function handleConversation(userInput, context, conversationHistory) {
   try {
-    // Check cache for this conversation first (for efficiency)
-    const cacheKey = `chat_${generateEmailContentHash([{snippet: userInput}])}`;
-    const cachedResponse = await getCachedItem(cacheKey);
-    
-    // Only use cache if it's a simple query without much context dependency
-    const isSimpleQuery = userInput.length < 20 && !containsReferenceTerms(userInput);
-    if (cachedResponse && isSimpleQuery) {
-      console.log("🎯 Using cached chat response");
-      return { reply: cachedResponse };
-    }
-    
     // Format conversation history for context
     const historyText = formatConversationHistory(conversationHistory);
     const hasHistory = historyText.length > 0;
@@ -513,10 +655,7 @@ async function handleConversation(userInput, context, conversationHistory) {
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 
                 "I couldn't process that. Please try again.";
     
-    // Only cache simple responses that don't depend heavily on context
-    if (isSimpleQuery) {
-      await storeCachedItem(cacheKey, reply);
-    }
+   
     
     return { reply };
   } catch (error) {
@@ -562,9 +701,9 @@ export async function sendEmail(token, to, subject, body) {
 /**
  * Function to fetch emails and store them for analysis
  */
-export async function fetchAndStoreEmails(token, timeFilter = 'week', readFilter = 'all') {
+export async function fetchAndStoreEmails(token, options = {}) {
   try {
-    const messages = await fetchEmails(token, timeFilter, readFilter);
+    const messages = await fetchEmails(token, options.timeFilter || 'week', options.readFilter || 'all');
     
     // Fetch full content for each message ID
     let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
@@ -577,7 +716,7 @@ export async function fetchAndStoreEmails(token, timeFilter = 'week', readFilter
       console.log("Emails stored in Chrome Storage.");
     });
     
-    // Extract contacts for future use
+    // Extract contacts from emails
     const contactsMap = new Map();
     
     validEmails.forEach(email => {
@@ -601,15 +740,18 @@ export async function fetchAndStoreEmails(token, timeFilter = 'week', readFilter
     });
     
     const knownContacts = Array.from(contactsMap.entries()); // [name, email]
-    chrome.storage.local.set({ knownContacts });
+    
+    // Store in IndexedDB instead of Chrome storage
+    if (knownContacts.length > 0) {
+      await storeContactsInDB(knownContacts);
+    }
     
     return {
       emails: validEmails,
       contacts: knownContacts,
-      count: validEmails.length
     };
   } catch (error) {
-    console.error("Error fetching and storing emails:", error);
+    console.error("Error in fetchAndStoreEmails:", error);
     throw error;
   }
 } 

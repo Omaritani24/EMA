@@ -22,6 +22,8 @@
       "scopes": [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/contacts.readonly",
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/calendar.events",
         "https://www.googleapis.com/auth/gmail.send"
@@ -30,7 +32,8 @@
     },
     "background": {
       "service_worker": "background.js",
-      "type": "module"
+      "type": "module",
+      "persistence": true
     },
     "content_scripts": [
       {
@@ -38,6 +41,12 @@
         "js": ["content.js"],
         "run_at": "document_end",
         "all_frames": true
+      }
+    ],
+    "web_accessible_resources": [
+      {
+        "resources": ["logo.png"],
+        "matches": ["https://mail.google.com/*"]
       }
     ],
     "action": {

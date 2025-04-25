@@ -1,5 +1,5 @@
 // Fetch a list of email message IDs (single batch)
-export function fetchEmails(token, timeFilter = 'week', readFilter = 'all') {
+export function fetchEmails(token, timeFilter = 'week', readFilter = 'all', additionalFilters = {}) {
     let maxResults = 100; // Default max results
     
     // Build the query based on filters
@@ -34,6 +34,28 @@ export function fetchEmails(token, timeFilter = 'week', readFilter = 'all') {
     } else if (readFilter === 'read') {
       if (query) query += ' ';
       query += 'is:read';
+    }
+    
+    // Add inbox only filter
+    if (additionalFilters?.inboxOnly) {
+      if (query) query += ' ';
+      query += 'in:inbox';
+    }
+    
+    // Handle category exclusions
+    if (additionalFilters?.excludeOther) {
+      if (query) query += ' ';
+      query += '-category:updates -category:forums';
+    }
+    
+    if (additionalFilters?.excludePromotions) {
+      if (query) query += ' ';
+      query += '-category:promotions';
+    }
+    
+    if (additionalFilters?.excludeSocial) {
+      if (query) query += ' ';
+      query += '-category:social';
     }
     
     // If timeFilter is all and we want large number of results

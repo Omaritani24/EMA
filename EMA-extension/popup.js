@@ -1,5 +1,12 @@
 import { summarizeWithGemini } from './geminiApi.js';
-import { getEmailSummary, saveEmailSummary, cleanupOldSummaries } from './storage.js';
+import { getEmailSummary, saveEmailSummary, cleanupOldSummaries, 
+         getSummaryFromDB, getChatHistoryFromDB, clearChatHistoryInDB, 
+         storeChatMessageInDB } from './storage.js';
+
+// Global variables at the top of the file to track ongoing requests
+let activeEmailRequest = null;
+let activeSummaryRequest = null;
+let activeEventsRequest = null;
 
 // When popup opens, request emails from background script
 document.addEventListener('DOMContentLoaded', function() {
@@ -8,15 +15,48 @@ document.addEventListener('DOMContentLoaded', function() {
     const sendButton = document.getElementById('send-button');
     const micButton = document.getElementById('mic-button');
     const statusMessage = document.getElementById('status-message');
-    const emailFilter = document.getElementById('email-filter');
-    const readFilter = document.getElementById('read-filter');
-    const refreshButton = document.getElementById('refresh-emails');
     const refreshSummaryButton = document.getElementById('refresh-summary');
     const emailSummary = document.getElementById('email-summary');
     const calendarEvents = document.getElementById('calendar-events');
     const refreshEvents = document.getElementById('refresh-events');
+    
+    // Settings elements
+    const settingsButton = document.getElementById('settings-button');
+    const settingsModal = document.getElementById('settings-modal');
+    const closeSettings = document.getElementById('close-settings');
+    const settingsTimePeriod = document.getElementById('settings-time-period');
+    const settingsStatus = document.getElementById('settings-status');
+    const settingsInboxOnly = document.getElementById('settings-inbox-only');
+    const settingsExcludeOther = document.getElementById('settings-exclude-other');
+    const settingsExcludePromotions = document.getElementById('settings-exclude-promotions');
+    const settingsExcludeSocial = document.getElementById('settings-exclude-social');
+    const settingsApply = document.getElementById('settings-apply');
 
     console.log("📅 Popup: DOMContentLoaded - initializing popup");
+    
+    // Clear chat history on open
+    chatbox.innerHTML = '';
+    chrome.storage.local.remove(['chatHistory', 'conversationHistory'], function() {
+        console.log('🧹 Cleared chat history on startup');
+        // Add initial greeting
+        addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
+    });
+
+    // Initialize default settings if not already set
+    chrome.storage.local.get(['emailSettings'], function(result) {
+        if (!result.emailSettings) {
+            const defaultSettings = {
+                timePeriod: 'week',
+                status: 'all',
+                inboxOnly: true,
+                excludeOther: false,
+                excludePromotions: false,
+                excludeSocial: false
+            };
+            chrome.storage.local.set({ emailSettings: defaultSettings });
+            console.log('Initialized default email settings');
+        }
+    });
 
     // Immediately load the latest events from storage and display them
     chrome.storage.local.get(['events'], function(result) {
@@ -77,97 +117,623 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }, 1000);
 
-    // Check if browser supports speech recognition
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        // Initialize speech recognition
-        recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
+    // After fetching emails, also fetch contacts
+    setTimeout(() => {
+        fetchContacts();
+    }, 1000); // Delay to allow email fetching to complete first
 
-        // Handle recognition results
-        recognition.onresult = function(event) {
-            const transcript = Array.from(event.results)
-                .map(result => result[0].transcript)
-                .join('');
+    // Settings handlers
+    // Open settings modal
+    settingsButton.addEventListener('click', function() {
+        // Update settings form with current values from storage
+        chrome.storage.local.get(['emailSettings'], function(result) {
+            const settings = result.emailSettings || {
+                timePeriod: 'week',
+                status: 'all',
+                inboxOnly: true,
+                excludeOther: false,
+                excludePromotions: false,
+                excludeSocial: false
+            };
             
-            chatInput.value = transcript;
-            
-            // Show the transcript as it's being recognized
-            showStatus(transcript);
+            // Set values in form
+            settingsTimePeriod.value = settings.timePeriod;
+            settingsStatus.value = settings.status;
+            settingsInboxOnly.checked = settings.inboxOnly;
+            settingsExcludeOther.checked = settings.excludeOther;
+            settingsExcludePromotions.checked = settings.excludePromotions;
+            settingsExcludeSocial.checked = settings.excludeSocial;
+        });
+        
+        // Show modal
+        settingsModal.style.display = 'flex';
+    });
+    
+    // Close settings modal
+    closeSettings.addEventListener('click', function() {
+        settingsModal.style.display = 'none';
+    });
+    
+    // Close modal when clicking outside content
+    settingsModal.addEventListener('click', function(e) {
+        if (e.target === settingsModal) {
+            settingsModal.style.display = 'none';
+        }
+    });
+    
+    // Apply settings
+    settingsApply.addEventListener('click', function() {
+        // Cancel any ongoing processes
+        terminateActiveProcesses();
+        
+        // Get settings from form
+        const settings = {
+            timePeriod: settingsTimePeriod.value,
+            status: settingsStatus.value,
+            inboxOnly: settingsInboxOnly.checked,
+            excludeOther: settingsExcludeOther.checked,
+            excludePromotions: settingsExcludePromotions.checked,
+            excludeSocial: settingsExcludeSocial.checked
         };
+        
+        // Save settings to storage
+        chrome.storage.local.set({ emailSettings: settings }, function() {
+            console.log('Email settings saved:', settings);
+            
+            // Fetch emails with new settings
+            fetchEmails();
+            
+            // Close modal
+            settingsModal.style.display = 'none';
+        });
+    });
 
-        // Handle end of speech
-        recognition.onend = function() {
-            isListening = false;
-            micButton.classList.remove('active');
-            hideStatus();
+    // Check if browser supports audio recording
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        let mediaRecorder;
+        let audioChunks = [];
+        const GEMINI_API_KEY = "AIzaSyBhlM0p5vFbeG0uR9oqb66ya2Gd8NuY6Ks";
+        
+        // Set up microphone button
+        micButton.addEventListener('click', toggleSpeechRecognition);
+        
+        // Function to toggle speech recognition
+        function toggleSpeechRecognition() {
+            if (isListening) {
+                stopRecording();
+                isListening = false;
+                micButton.classList.remove('active');
+                hideStatus();
+            } else {
+                // Check for microphone permission first
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({ name: 'microphone' })
+                        .then(permissionStatus => {
+                            if (permissionStatus.state === 'granted') {
+                                // Permission already granted, start recording
+                                startRecording();
+                            } else if (permissionStatus.state === 'prompt') {
+                                // Will show permission prompt, prepare user with our custom popup first
+                                showMicrophonePermissionPopup();
+                                
+                                // Listen for permission changes
+                                permissionStatus.onchange = function() {
+                                    if (this.state === 'granted') {
+                                        // Once granted, close our popup and start
+                                        const tooltip = document.getElementById('mic-permission-tooltip');
+                                        if (tooltip) tooltip.remove();
+                                        
+                                        startRecording();
+                                    }
+                                };
+                                
+                                // Try to start (will trigger browser's permission dialog)
+                                startRecording();
+                            } else if (permissionStatus.state === 'denied') {
+                                // Permission previously denied
+                                showMicrophonePermissionPopup();
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error checking permission:', error);
+                            // Fallback to direct approach if permissions API fails
+                            startRecording();
+                        });
+                } else {
+                    // Permissions API not supported, try direct approach
+                    startRecording();
+                }
+            }
+        }
+        
+        // Variable to store the listening indicator interval
+        let listeningIndicatorInterval = null;
+        
+        // Function to start the listening indicator animation
+        function startListeningIndicator() {
+            if (listeningIndicatorInterval) {
+                clearInterval(listeningIndicatorInterval);
+            }
+            
+            let dots = '';
+            let count = 0;
+            
+            // Create and add a listening indicator element
+            const indicatorContainer = document.createElement('div');
+            indicatorContainer.id = 'listening-indicator';
+            indicatorContainer.style.cssText = `
+                position: fixed;
+                bottom: 60px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(212, 79, 79, 0.9);
+                color: white;
+                padding: 6px 12px;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: bold;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                display: flex;
+                align-items: center;
+                z-index: 1000;
+            `;
+            
+            // Add microphone icon
+            indicatorContainer.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                </svg>
+                <span>Listening<span id="listening-dots">...</span></span>
+            `;
+            
+            document.body.appendChild(indicatorContainer);
+            
+            const dotsElement = document.getElementById('listening-dots');
+            
+            // Animate the dots
+            listeningIndicatorInterval = setInterval(() => {
+                count = (count + 1) % 4;
+                dots = '.'.repeat(count);
+                if (dotsElement) {
+                    dotsElement.textContent = dots;
+                }
+            }, 500);
+            
+           
+        }
+        
+        // Function to stop the listening indicator
+        function stopListeningIndicator() {
+            if (listeningIndicatorInterval) {
+                clearInterval(listeningIndicatorInterval);
+                listeningIndicatorInterval = null;
+            }
+            
+            const indicator = document.getElementById('listening-indicator');
+            if (indicator) {
+                // Add fade-out animation
+                indicator.style.transition = 'opacity 0.3s ease-out';
+                indicator.style.opacity = '0';
+                
+                // Remove after animation completes
+                setTimeout(() => {
+                    if (indicator.parentElement) {
+                        indicator.parentElement.removeChild(indicator);
+                    }
+                }, 300);
+            }
+        }
+        
+        // Start recording audio from microphone
+        function startRecording() {
+            console.log("Starting audio recording...");
+            
+            
+            
+            
+            navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                } 
+            })
+            .then(stream => {
+                console.log("Microphone access granted, initializing recording...");
+                isListening = true;
+                micButton.classList.add('active');
+                
+                // Start listening indicator with animated dots
+                startListeningIndicator();
+                
+                // Clear any existing text
+                chatInput.value = '';
+                
+                try {
+                    // Initialize the Media Recorder with specific mime type and bitrate
+                    mediaRecorder = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm;codecs=opus',
+                        audioBitsPerSecond: 16000
+                    });
+                    audioChunks = [];
+                    
+                    console.log("MediaRecorder state:", mediaRecorder.state);
+                    
+                    // Collect audio chunks
+                    mediaRecorder.addEventListener('dataavailable', event => {
+                        console.log("Data available event, data size:", event.data.size);
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    });
+                    
+                    // When recording stops, transcribe the audio
+                    mediaRecorder.addEventListener('stop', () => {
+                        console.log("Recording stopped, processing audio...");
+                        console.log("Collected audio chunks:", audioChunks.length);
+                        
+                        // Stop the listening indicator
+                        stopListeningIndicator();
+                        
+                        // Only process if we have audio data
+                        if (audioChunks.length > 0 && audioChunks.some(chunk => chunk.size > 0)) {
+                            // Convert audio chunks to blob
+                            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                            console.log("Audio blob created, size:", audioBlob.size);
+                            
+                            // Check if we have actual audio data
+                            if (audioBlob.size > 100) {  // Arbitrary small threshold to check for data
+                                
+                                
+                                // Send audio to Google Cloud Speech-to-Text API
+                                transcribeAudio(audioBlob);
+                            } else {
+                                console.error("Audio blob too small, likely no audio recorded");
+                                
+                            }
+                        } else {
+                            console.error("No audio chunks collected");
+                            
+                        }
+                        
+                        // Stop all audio tracks
+                        stream.getTracks().forEach(track => track.stop());
+                    });
+                    
+                    // Handle recording errors
+                    mediaRecorder.addEventListener('error', error => {
+                        console.error("MediaRecorder error:", error);
+                        stopListeningIndicator();
+                        
+                    });
+                    
+                    // Start recording with 10ms timeslices to get data frequently
+                    mediaRecorder.start(10);
+                    console.log("MediaRecorder started");
+                    
+                    // Automatically stop recording after 15 seconds
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state === 'recording') {
+                            console.log("Auto-stopping recording after timeout");
+                            stopRecording();
+                        }
+                    }, 15000);
+                } catch (error) {
+                    console.error("Error setting up MediaRecorder:", error);
+                    stopListeningIndicator();
+                    
+                    
+                    // Clean up
+                    isListening = false;
+                    micButton.classList.remove('active');
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            })
+            .catch(error => {
+                console.error('Error accessing microphone:', error);
+                isListening = false;
+                micButton.classList.remove('active');
+                
+            });
+        }
+        
+        // Stop recording audio
+        function stopRecording() {
+            console.log("Stopping recording...");
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                
+                stopListeningIndicator(); // Stop the listening indicator
+                mediaRecorder.stop();
+                console.log("MediaRecorder stopped");
+            } else {
+                console.warn("Tried to stop recording, but MediaRecorder is not recording");
+                stopListeningIndicator(); // Ensure indicator is stopped even if recorder isn't running
+                hideStatus();
+                isListening = false;
+                micButton.classList.remove('active');
+            }
+        }
+        
+        // Transcribe audio using Google Cloud Speech-to-Text
+        async function transcribeAudio(audioBlob) {
+            try {
+                console.log("Starting transcription for audio blob:", audioBlob.size, "bytes");
+                
+                // Convert Blob to base64
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                
+                reader.onloadend = async () => {
+                    try {
+                        console.log("Audio file read complete");
+                        
+                        // Remove the data URL prefix to get just the base64 string
+                        const base64Audio = reader.result.split(',')[1];
+                        console.log("Base64 audio length:", base64Audio.length);
+                        
+                        if (!base64Audio || base64Audio.length < 100) {
+                            console.error("Base64 audio data too small");
+                            
+                            return;
+                        }
+                        
+                        // Using Google Cloud Speech-to-Text API
+                        const apiUrl = `https://speech.googleapis.com/v1/speech:recognize?key=${GEMINI_API_KEY}`;
+                        console.log("Sending request to Speech-to-Text API:", apiUrl);
+                        
+                        
+                        
+                        const requestData = {
+                            config: {
+                                encoding: "WEBM_OPUS",
+                                sampleRateHertz: 48000,
+                                languageCode: "en-US",  // Primary language (required)
+                                model: "default",
+                                enableAutomaticPunctuation: true
+                            },
+                            audio: {
+                                content: base64Audio
+                            }
+                        };
+                        
+                        console.log("API Request config:", JSON.stringify(requestData.config));
+                        
+                        // Send request to Google Cloud Speech-to-Text
+                        console.log("Sending API request...");
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(requestData)
+                        });
+                        
+                        console.log("API response status:", response.status);
+                        
+                        if (!response.ok) {
+                            const errorText = await response.text();
+                            console.error("API error response:", errorText);
+                            
+                            return;
+                        }
+                        
+                        const responseData = await response.json();
+                        console.log("API response data:", JSON.stringify(responseData));
+                        
+                        // Check if we got results
+                        if (responseData.results && responseData.results.length > 0) {
+                            const transcript = responseData.results
+                                .map(result => result.alternatives[0].transcript)
+                                .join(' ');
+                            
+                            // Show detected language
+                            if (responseData.results[0].languageCode) {
+                                const detectedLang = responseData.results[0].languageCode;
+                                console.log('Detected language:', detectedLang);
+                                
+                            }
+                                
+                            console.log('Transcription result:', transcript);
+                            
+                            // Update the input field with the transcript
+                            chatInput.value = transcript;
             
             // If we got text, send the message after a brief delay
             if (chatInput.value.trim()) {
                 setTimeout(() => {
                     sendMessage();
                 }, 500);
+                            } else {
+                                
+                            }
+                        } else {
+                            console.error('No transcription results:', responseData);
+                            
+                        }
+                    } catch (innerError) {
+                        console.error("Error in audio processing:", innerError);
+                        
+                    }
+                };
+                
+                reader.onerror = (error) => {
+                    console.error("FileReader error:", error);
+                    
+                };
+            } catch (error) {
+                console.error("Transcription error:", error);
+                
             }
-        };
-
-        // Handle errors
-        recognition.onerror = function(event) {
-            console.error('Speech recognition error:', event.error);
-            isListening = false;
-            micButton.classList.remove('active');
-            
-            if (event.error === 'not-allowed') {
-                showStatus('Microphone access denied', 3000);
-            } else {
-                showStatus('Speech recognition error', 3000);
-            }
-        };
-
-        // Set up microphone button
-        micButton.addEventListener('click', toggleSpeechRecognition);
-    } else {
-        // Hide mic button if speech recognition is not supported
-        micButton.style.display = 'none';
-        console.warn('Speech recognition not supported in this browser');
-    }
-
-    // Function to toggle speech recognition
-    function toggleSpeechRecognition() {
-        if (isListening) {
-            recognition.stop();
-            isListening = false;
-            micButton.classList.remove('active');
-            hideStatus();
-        } else {
-            recognition.start();
-            isListening = true;
-            micButton.classList.add('active');
-            showStatus('Listening...');
-            // Clear any existing text
-            chatInput.value = '';
         }
-    }
-
-    // Function to show status message
-    function showStatus(message, duration = 0) {
-        statusMessage.textContent = message;
-        statusMessage.classList.add('visible');
         
-        if (duration > 0) {
-            setTimeout(() => {
-                hideStatus();
-            }, duration);
+        // Helper function to get language name from code
+        function getLanguageName(langCode) {
+            const languages = {
+                'en': 'English',
+                'en-US': 'English',
+                'ar': 'Arabic',
+                'ar-SA': 'Arabic',
+                'ar-EG': 'Arabic (Egypt)',
+                'fr': 'French',
+                'fr-FR': 'French',
+                'es': 'Spanish',
+                'es-ES': 'Spanish'
+            };
+            
+            // Check for exact match or just the language part (e.g., 'en' from 'en-US')
+            return languages[langCode] || languages[langCode.split('-')[0]] || langCode;
         }
+    } else {
+        // Hide mic button if audio recording is not supported
+        micButton.style.display = 'none';
+        console.warn('Audio recording not supported in this browser');
     }
+
+
+ 
+
+    // Function to show a mic permission tooltip bubble above the mic button
+    function showMicrophonePermissionPopup() {
+        // First remove any existing tooltip
+        const existingTooltip = document.getElementById('mic-permission-tooltip');
+        if (existingTooltip) {
+            existingTooltip.remove();
+        }
+        
+        // Get the mic button position
+        const micButton = document.getElementById('mic-button');
+        
+        // Create tooltip container
+        const tooltip = document.createElement('div');
+        tooltip.id = 'mic-permission-tooltip';
+        tooltip.style.cssText = `
+            position: absolute;
+            bottom: 100%;
+            margin-bottom: 10px;
+            background: white;
+            padding: 12px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            max-width: 250px;
+            text-align: center;
+            animation: fadeIn 0.3s ease-out;
+            transform-origin: bottom center;
+        `;
+        
+        // Add tooltip content
+        tooltip.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 5px; color: #e74c3c;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-right: 5px;">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                </svg>
+                Microphone Access Needed
+            </div>
+            <p style="margin: 5px 0; font-size: 12px; color: #555;">
+                To allow: Right click icon > Manage extension > Site settings > Allow access to microphone
+            </p>
+        `;
+        
+        // Add tooltip to the chat input container
+        const chatInputContainer = document.querySelector('.chat-input-container');
+        chatInputContainer.style.position = 'relative';
+        chatInputContainer.appendChild(tooltip);
+        
+        // Position the tooltip to be centered above the mic button
+        // Get the mic button's position and size
+        const micButtonRect = micButton.getBoundingClientRect();
+        const containerRect = chatInputContainer.getBoundingClientRect();
+        
+        // Calculate the position to center tooltip over mic button
+        const micButtonCenterX = micButtonRect.left + (micButtonRect.width / 2) - containerRect.left;
+        const tooltipWidth = tooltip.offsetWidth;
+        const leftPosition = micButtonCenterX - (tooltipWidth / 2);
+        
+        // Make sure tooltip doesn't go off the container edges
+        const finalLeft = Math.max(10, Math.min(leftPosition, containerRect.width - tooltipWidth - 10));
+        
+        // Update tooltip position
+        tooltip.style.left = `${finalLeft}px`;
+        
+        // Add tooltip arrow
+        const arrow = document.createElement('div');
+        arrow.style.cssText = `
+            position: absolute;
+            bottom: -8px;
+            left: ${micButtonCenterX - finalLeft}px;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-top: 8px solid white;
+            transform: translateX(-50%);
+        `;
+        
+        tooltip.appendChild(arrow);
+        
+        // Add fade-in animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                    transform: scale(0.9) translateY(5px);
+                }
+                to {
+                    opacity: 1;
+                    transform: scale(1) translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // Auto-hide after a few seconds
+        setTimeout(() => {
+            if (tooltip.parentElement) {
+                tooltip.style.animation = 'fadeOut 0.3s ease-in forwards';
+                
+                // Add fade-out animation
+                const fadeOutStyle = document.createElement('style');
+                fadeOutStyle.textContent = `
+                    @keyframes fadeOut {
+                        from {
+                            opacity: 1;
+                            transform: scale(1) translateY(0);
+                        }
+                        to {
+                            opacity: 0;
+                            transform: scale(0.9) translateY(5px);
+                        }
+                    }
+                `;
+                document.head.appendChild(fadeOutStyle);
+                
+                // Remove after animation completes
+                setTimeout(() => {
+                    if (tooltip.parentElement) {
+                        tooltip.remove();
+                    }
+                }, 300);
+            }
+        }, 6000);
+    }
+
+
+ 
 
     // Function to hide status message
     function hideStatus() {
+        if (!statusMessage) {
+            return;
+        }
         statusMessage.classList.remove('visible');
     }
-
-    // Add initial greeting
-    addMessageToChat("Hi! I'm EMA, your email assistant. I can help you find information in your emails or answer questions about them. What would you like to know?", 'bot');
 
     // Function to handle sending messages
     function sendMessage() {
@@ -200,42 +766,104 @@ document.addEventListener('DOMContentLoaded', function() {
 
     sendButton.addEventListener('click', sendMessage);
 
-    // Function to fetch emails based on filters
+    // Function to terminate any active processes
+    function terminateActiveProcesses() {
+        console.log("Terminating active processes before applying new settings");
+        
+        // Cancel active email request
+        if (activeEmailRequest) {
+            chrome.runtime.sendMessage({
+                action: "cancelRequest",
+                requestId: activeEmailRequest
+            });
+            activeEmailRequest = null;
+        }
+        
+        // Cancel active summary request
+        if (activeSummaryRequest) {
+            chrome.runtime.sendMessage({
+                action: "cancelRequest",
+                requestId: activeSummaryRequest
+            });
+            activeSummaryRequest = null;
+        }
+        
+        // Cancel active events request
+        if (activeEventsRequest) {
+            chrome.runtime.sendMessage({
+                action: "cancelRequest",
+                requestId: activeEventsRequest
+            });
+            activeEventsRequest = null;
+        }
+        
+        // Clear any pending timeouts
+        if (window.extractEventsTimeout) {
+            clearTimeout(window.extractEventsTimeout);
+        }
+        
+        if (window.refreshButtonTimeout) {
+            clearTimeout(window.refreshButtonTimeout);
+        }
+    }
+
     function fetchEmails() {
-        const timeFilterValue = emailFilter.value;
-        const readFilterValue = readFilter.value;
-        
-        // Show loading state
-        emailSummary.innerHTML = '<p class="summary-placeholder">Loading emails...</p>';
-        calendarEvents.innerHTML = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
-        
-        // Request emails from background script with filters
-        chrome.runtime.sendMessage(
-            {
-                action: "getEmails", 
-                timeFilter: timeFilterValue,
-                readFilter: readFilterValue
-            },
-            function(response) {
-                if (response && response.emails) {
-                    // Store emails for potential refresh
-                    currentEmails = response.emails;
-                    
-                    generateEmailSummary(response.emails);
-                    
-                    // Process calendar events
-                    if (response.events && response.events.length > 0) {
-                        displayCalendarEvents(response.events);
-                    } else {
-                        // Force refresh of calendar events
-                        extractCalendarEvents(true);
+        // Get settings from storage
+        chrome.storage.local.get(['emailSettings'], function(result) {
+            const settings = result.emailSettings || {
+                timePeriod: 'week',
+                status: 'all',
+                inboxOnly: true,
+                excludeOther: false,
+                excludePromotions: false,
+                excludeSocial: false
+            };
+            
+            // Show loading state
+            emailSummary.innerHTML = '<p class="summary-placeholder">Loading emails...</p>';
+            calendarEvents.innerHTML = '<p class="events-placeholder">Scanning emails for calendar events...</p>';
+            
+            // Generate a unique request ID
+            activeEmailRequest = Date.now().toString();
+            
+            // Request emails from background script with filters
+            chrome.runtime.sendMessage(
+                {
+                    action: "getEmails", 
+                    requestId: activeEmailRequest,
+                    timeFilter: settings.timePeriod,
+                    readFilter: settings.status,
+                    additionalFilters: {
+                        inboxOnly: settings.inboxOnly,
+                        excludeOther: settings.excludeOther,
+                        excludePromotions: settings.excludePromotions,
+                        excludeSocial: settings.excludeSocial
                     }
-                } else {
-                    emailSummary.innerHTML = '<p class="summary-placeholder">No emails found.</p>';
-                    calendarEvents.innerHTML = '<p class="events-placeholder">No events found.</p>';
+                },
+                function(response) {
+                    // Clear the active request ID
+                    activeEmailRequest = null;
+                    
+                    if (response && response.emails) {
+                        // Store emails for potential refresh
+                        currentEmails = response.emails;
+                        
+                        generateEmailSummary(response.emails);
+                        
+                        // Process calendar events
+                        if (response.events && response.events.length > 0) {
+                            displayCalendarEvents(response.events);
+                        } else {
+                            // Force refresh of calendar events
+                            extractCalendarEvents(true);
+                        }
+                    } else {
+                        emailSummary.innerHTML = '<p class="summary-placeholder">No emails found.</p>';
+                        calendarEvents.innerHTML = '<p class="events-placeholder">No events found.</p>';
+                    }
                 }
-            }
-        );
+            );
+        });
     }
 
     // Function to generate email summary
@@ -248,28 +876,39 @@ document.addEventListener('DOMContentLoaded', function() {
         // Show loading state
         emailSummary.innerHTML = '<p class="summary-placeholder">Generating summary...</p>';
         
-        // Get current filter values to check if they've changed
-        const timeFilterValue = emailFilter.value;
-        const readFilterValue = readFilter.value;
-        
-        // Send emails to background script for summarization
-        chrome.runtime.sendMessage(
-            {
-                action: "summarizeEmails", 
-                emails: emails,
-                timeFilter: timeFilterValue,
-                readFilter: readFilterValue,
-                forceRegenerate: forceRegenerate
-            },
-            function(response) {
-                if (response && response.summary) {
-                    // Display the summary as text
-                    emailSummary.innerHTML = `<p>${response.summary}</p>`;
-                } else {
-                    emailSummary.innerHTML = '<p class="summary-placeholder">Could not generate summary.</p>';
+        // Get current filter values from storage rather than undefined variables
+        chrome.storage.local.get(['emailSettings'], function(result) {
+            const settings = result.emailSettings || {
+                timePeriod: 'week',
+                status: 'all'
+            };
+            
+            // Generate a unique request ID
+            activeSummaryRequest = Date.now().toString();
+            
+            // Send emails to background script for summarization
+            chrome.runtime.sendMessage(
+                {
+                    action: "summarizeEmails", 
+                    requestId: activeSummaryRequest,
+                    emails: emails,
+                    timeFilter: settings.timePeriod,
+                    readFilter: settings.status,
+                    forceRegenerate: forceRegenerate
+                },
+                function(response) {
+                    // Clear the active request ID
+                    activeSummaryRequest = null;
+                    
+                    if (response && response.summary) {
+                        // Display the summary as text
+                        emailSummary.innerHTML = `<p>${response.summary}</p>`;
+                    } else {
+                        emailSummary.innerHTML = '<p class="summary-placeholder">Could not generate summary.</p>';
+                    }
                 }
-            }
-        );
+            );
+        });
     }
     
     // Function to extract calendar events from emails
@@ -294,10 +933,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (refreshButton) {
             const originalContent = refreshButton.innerHTML;
             refreshButton.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinning">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinning">
                     <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
                 </svg>
-                Refreshing...
+
             `;
             
             // Disable the button while refreshing
@@ -312,10 +951,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 5000);
         }
         
+        // Generate a unique request ID
+        activeEventsRequest = Date.now().toString();
+        
         // First, sync with Google Calendar to ensure our event statuses are up-to-date
         console.log("📅 Popup: Sending syncCalendarEvents message");
         chrome.runtime.sendMessage(
-            {action: "syncCalendarEvents"},
+            {
+                action: "syncCalendarEvents",
+                requestId: activeEventsRequest
+            },
             function(syncResponse) {
                 console.log("📅 Popup: Calendar sync result:", syncResponse);
                 
@@ -328,7 +973,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.log("📅 Popup: Fallback to regular event extraction");
                     // Fallback to regular event extraction
                     chrome.runtime.sendMessage(
-                        {action: "extractEvents", forceRefresh: forceRefresh},
+                        {
+                            action: "extractEvents", 
+                            requestId: activeEventsRequest,
+                            forceRefresh: forceRefresh
+                        },
                         function(response) {
                             console.log("📅 Popup: extractEvents response received", response);
                             handleEventsResponse(response);
@@ -341,14 +990,18 @@ document.addEventListener('DOMContentLoaded', function() {
         // Helper function to handle event response and update UI
         function handleEventsResponse(response) {
             console.log("📅 Popup: handleEventsResponse called with:", response);
+            
+            // Clear the active request ID
+            activeEventsRequest = null;
+            
             // Clear loading spinner
             if (refreshButton && window.refreshButtonTimeout) {
                 clearTimeout(window.refreshButtonTimeout);
                 refreshButton.innerHTML = `
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-                    </svg>
-                    Refresh
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+                    
                 `;
                 refreshButton.style.pointerEvents = '';
                 refreshButton.style.opacity = '';
@@ -363,7 +1016,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
-    
+
     // Function to display calendar events
     function displayCalendarEvents(events) {
         if (!events || events.length === 0) {
@@ -377,8 +1030,74 @@ document.addEventListener('DOMContentLoaded', function() {
         // Filter out events based on user preference (can be added later)
         const showAddedEvents = localStorage.getItem('showAddedEvents') !== 'false'; // Default to true
         
-        // Sort events by date (most recent first)
-        events.sort((a, b) => {
+        // Add option to hide added events if there are any - add this BEFORE we filter events
+        if (events.some(e => e.added)) {
+            const controlElement = document.createElement('div');
+            controlElement.className = 'events-control';
+            controlElement.innerHTML = `
+                <label>
+                    <input type="checkbox" id="hide-added-events" ${!showAddedEvents ? 'checked' : ''}>
+                    Hide events already added to calendar
+                </label>
+            `;
+            calendarEvents.appendChild(controlElement);
+            
+            document.getElementById('hide-added-events').addEventListener('change', function(e) {
+                localStorage.setItem('showAddedEvents', !e.target.checked);
+                displayCalendarEvents(events);
+            });
+        }
+        
+        // Add filtering controls for dated/undated events
+        const viewMode = localStorage.getItem('eventViewMode') || 'with-dates'; // Default to showing events with dates
+        
+        const filterControlElement = document.createElement('div');
+        filterControlElement.className = 'events-filter-controls';
+        filterControlElement.innerHTML = `
+            <div class="events-view-options">
+                
+                <label class="view-option ${viewMode === 'with-dates' ? 'active' : ''}">
+                    <input type="radio" name="event-view" value="with-dates" ${viewMode === 'with-dates' ? 'checked' : ''}>
+                    Events with Dates
+                </label>
+                <label class="view-option ${viewMode === 'without-dates' ? 'active' : ''}">
+                    <input type="radio" name="event-view" value="without-dates" ${viewMode === 'without-dates' ? 'checked' : ''}>
+                    Events without Dates
+                </label>
+            </div>
+        `;
+        calendarEvents.appendChild(filterControlElement);
+        
+        // Add event listeners to filter options
+        const viewOptions = filterControlElement.querySelectorAll('input[name="event-view"]');
+        viewOptions.forEach(option => {
+            option.addEventListener('change', function(e) {
+                const viewMode = e.target.value;
+                localStorage.setItem('eventViewMode', viewMode);
+                displayCalendarEvents(events);
+            });
+        });
+        
+        // Track events with and without dates
+        let datedEvents = [];
+        let undatedEvents = [];
+        
+        // Separate events with and without dates
+        events.forEach(event => {
+            // Skip events that have been added to calendar if showAddedEvents is false
+            if (!showAddedEvents && event.added) {
+                return;
+            }
+            
+            if (event.date) {
+                datedEvents.push(event);
+            } else {
+                undatedEvents.push(event);
+            }
+        });
+        
+        // Sort dated events by date (most recent first)
+        datedEvents.sort((a, b) => {
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
             return dateA - dateB;
@@ -387,27 +1106,121 @@ document.addEventListener('DOMContentLoaded', function() {
         // Count how many valid events we're displaying
         let validEventsCount = 0;
         
-        // Create HTML for each event
-        events.forEach(event => {
-            // Skip invalid events
-            if (!event.date) {
-                console.warn("Skipping event without date: ", event);
+        // Display dated events if viewMode is 'with-dates'
+        if (datedEvents.length > 0 && viewMode === 'with-dates') {
+            const datedEventsContainer = document.createElement('div');
+            datedEventsContainer.className = 'dated-events';
+            
+            // Create HTML for each dated event
+            datedEvents.forEach(event => {
+                validEventsCount++;
+                
+                const eventElement = createEventElement(event);
+                datedEventsContainer.appendChild(eventElement);
+            });
+            
+            calendarEvents.appendChild(datedEventsContainer);
+        }
+        
+        // Display undated events if viewMode is 'without-dates'
+        if (undatedEvents.length > 0 && viewMode === 'without-dates') {
+            const undatedHeader = document.createElement('div');
+            undatedHeader.className = 'floating-events-header';
+            undatedHeader.innerHTML = `
+                <h4>Events without Dates <span class="undated-count">${undatedEvents.length}</span></h4>
+                <div class="floating-events-info">Events without specific date information</div>
+            `;
+            calendarEvents.appendChild(undatedHeader);
+            
+            const undatedEventsContainer = document.createElement('div');
+            undatedEventsContainer.className = 'undated-events';
+            
+            // Create HTML for each undated event
+            undatedEvents.forEach(event => {
+                validEventsCount++;
+                
+                const eventElement = createEventElement(event);
+                undatedEventsContainer.appendChild(eventElement);
+            });
+            
+            calendarEvents.appendChild(undatedEventsContainer);
+            }
+            
+        // Show placeholder if no valid events after filtering
+        if (validEventsCount === 0) {
+            if (!showAddedEvents) {
+                const placeholderElement = document.createElement('p');
+                placeholderElement.className = 'events-placeholder';
+                placeholderElement.innerHTML = 'No new events found. <a href="#" id="show-added-events">Show added events</a>';
+                calendarEvents.appendChild(placeholderElement);
+                
+                document.getElementById('show-added-events').addEventListener('click', function(e) {
+                    e.preventDefault();
+                    localStorage.setItem('showAddedEvents', 'true');
+                    displayCalendarEvents(events);
+                });
+            } else {
+                const placeholderElement = document.createElement('p'); 
+                placeholderElement.className = 'events-placeholder';
+                
+                // Customize message based on view mode
+                if (viewMode === 'with-dates') {
+                    placeholderElement.textContent = 'No events with dates found.';
+                    
+                    // If we have undated events, suggest switching to that view
+                    if (undatedEvents.length > 0) {
+                        placeholderElement.innerHTML += ` <a href="#" id="switch-to-undated">View ${undatedEvents.length} events without dates</a>`;
+                        
+                        // Add event listener after the element is added to DOM
+                        setTimeout(() => {
+                            const switchLink = document.getElementById('switch-to-undated');
+                            if (switchLink) {
+                                switchLink.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    localStorage.setItem('eventViewMode', 'without-dates');
+                                    displayCalendarEvents(events);
+                                });
+                            }
+                        }, 0);
+                    }
+                } else {
+                    placeholderElement.textContent = 'No events without dates found.';
+                    
+                    // If we have dated events, suggest switching to that view
+                    if (datedEvents.length > 0) {
+                        placeholderElement.innerHTML += ` <a href="#" id="switch-to-dated">View ${datedEvents.length} events with dates</a>`;
+                        
+                        // Add event listener after the element is added to DOM
+                        setTimeout(() => {
+                            const switchLink = document.getElementById('switch-to-dated');
+                            if (switchLink) {
+                                switchLink.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    localStorage.setItem('eventViewMode', 'with-dates');
+                                    displayCalendarEvents(events);
+                                });
+                            }
+                        }, 0);
+                    }
+                }
+                
+                calendarEvents.appendChild(placeholderElement);
+            }
                 return;
             }
             
-            // Skip events that have been added to calendar if showAddedEvents is false
-            if (!showAddedEvents && event.added) {
-                return;
-            }
+        // Add event listeners to all buttons
+        addEventListeners();
             
-            validEventsCount++;
-            
+        // Helper function to create an event element
+        function createEventElement(event) {
             const eventElement = document.createElement('div');
             eventElement.className = `event-item${event.added ? ' added' : ''}`;
             eventElement.setAttribute('data-event-id', event.id);
             
-            // Format date for display
-            let formattedDate = "Unknown Date";
+            // Format date for display or show placeholder for undated events
+            let formattedDate = "Flexible Timing";
+            if (event.date) {
             try {
                 const eventDate = new Date(event.date);
                 if (!isNaN(eventDate.getTime())) {
@@ -422,7 +1235,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             } catch (error) {
                 console.warn("Error formatting date:", error);
-                formattedDate = event.date || "Unknown Date";
+                    formattedDate = event.date || "Flexible Timing";
+                }
             }
             
             // Title fallback
@@ -430,14 +1244,23 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Create HTML structure for the event
             eventElement.innerHTML = `
+                <div class="event-header">
                 <div class="event-title">${title}</div>
+                    <button class="delete-event-x" data-event-id="${event.id}" title="Remove this event">×</button>
+                </div>
                 <div class="event-info">
                     <div class="event-date">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            ${event.date ? `
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                             <line x1="16" y1="2" x2="16" y2="6"></line>
                             <line x1="8" y1="2" x2="8" y2="6"></line>
                             <line x1="3" y1="10" x2="21" y2="10"></line>
+                            ` : `
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            `}
                         </svg>
                         ${formattedDate}
                     </div>
@@ -464,6 +1287,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="event-actions">
                     ${event.added ? `
                     <div class="event-added-badge">Added to Calendar</div>
+                    <button class="remove-from-calendar" data-event-id="${event.id}.remove">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        Remove from Calendar
+                    </button>
                     ` : `
                     <button class="add-to-calendar" data-event-id="${event.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -489,30 +1319,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             `;
             
-            calendarEvents.appendChild(eventElement);
-        });
-        
-        // Show placeholder if no valid events after filtering
-        if (validEventsCount === 0) {
-            if (!showAddedEvents) {
-                calendarEvents.innerHTML = '<p class="events-placeholder">No new events found. <a href="#" id="show-added-events">Show added events</a></p>';
-                document.getElementById('show-added-events').addEventListener('click', function(e) {
-                    e.preventDefault();
-                    localStorage.setItem('showAddedEvents', 'true');
-                    displayCalendarEvents(events);
-                });
-            } else {
-                calendarEvents.innerHTML = '<p class="events-placeholder">No calendar events found.</p>';
-            }
-            return;
+            return eventElement;
         }
         
+        // Helper function to add event listeners to all buttons
+        function addEventListeners() {
         // Add event listeners to the "Add to Calendar" buttons
         const addButtons = calendarEvents.querySelectorAll('.add-to-calendar');
         addButtons.forEach(button => {
             button.addEventListener('click', function(e) {
                 const eventId = e.currentTarget.getAttribute('data-event-id');
                 addEventToCalendar(eventId, events);
+            });
+        });
+            
+            // Add event listeners to the "Remove from Calendar" buttons
+            const removeButtons = calendarEvents.querySelectorAll('.remove-from-calendar');
+            removeButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    const eventId = e.currentTarget.getAttribute('data-event-id').split('.')[0];
+                    removeEventFromCalendar(eventId, events);
             });
         });
         
@@ -525,21 +1351,13 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
         
-        // Add option to hide added events if there are any
-        if (events.some(e => e.added) && showAddedEvents) {
-            const controlElement = document.createElement('div');
-            controlElement.className = 'events-control';
-            controlElement.innerHTML = `
-                <label>
-                    <input type="checkbox" id="hide-added-events" ${!showAddedEvents ? 'checked' : ''}>
-                    Hide events already added to calendar
-                </label>
-            `;
-            calendarEvents.insertBefore(controlElement, calendarEvents.firstChild);
-            
-            document.getElementById('hide-added-events').addEventListener('change', function(e) {
-                localStorage.setItem('showAddedEvents', !e.target.checked);
-                displayCalendarEvents(events);
+        // Add event listeners to the "Delete Event" buttons
+            const deleteButtons = calendarEvents.querySelectorAll('.delete-event-x');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function(e) {
+                const eventId = e.currentTarget.getAttribute('data-event-id');
+                deleteEvent(eventId, events);
+            });
             });
         }
     }
@@ -554,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const button = calendarEvents.querySelector(`button[data-event-id="${eventId}"]`);
         if (button) {
             button.disabled = true;
-            button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> Adding...';
+            button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>';
         }
         
         // Send the event to the background script to add to Calendar
@@ -654,6 +1472,130 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Function to delete an event from the list
+    function deleteEvent(eventId, allEvents) {
+        if (!eventId) return;
+        
+        // Find the event element
+        const eventElement = calendarEvents.querySelector(`div[data-event-id="${eventId}"]`);
+        
+        if (eventElement) {
+            // Remove the element from DOM with animation
+            eventElement.style.opacity = "0";
+            eventElement.style.height = "0";
+            eventElement.style.marginBottom = "0";
+            eventElement.style.padding = "0";
+            eventElement.style.overflow = "hidden";
+            eventElement.style.transition = "all 0.3s ease";
+            
+            // After animation completes, remove it completely
+            setTimeout(() => {
+                eventElement.remove();
+                
+                // If it was the last event, show "no events" message
+                if (calendarEvents.querySelectorAll('.event-item').length === 0) {
+                    calendarEvents.innerHTML = '<p class="events-placeholder">No calendar events found.</p>';
+                }
+                
+                // Show a message to the user
+                addMessageToChat("Event has been removed from your list.", 'bot');
+                
+                // Remove from storage by filtering out this event
+                chrome.storage.local.get(['events'], function(result) {
+                    if (result.events && result.events.length > 0) {
+                        const updatedEvents = result.events.filter(event => event.id !== eventId);
+                        chrome.storage.local.set({ events: updatedEvents });
+                    }
+                });
+            }, 300);
+        }
+    }
+
+    // Function to remove an event from Google Calendar
+    function removeEventFromCalendar(eventId, allEvents) {
+        // Find the event in our list
+        const event = allEvents.find(e => e.id === eventId);
+        if (!event) {
+            console.error("Event not found:", eventId);
+            return;
+        }
+        
+        // Disable the button and show loading state
+        const button = calendarEvents.querySelector(`button[data-event-id="${eventId}.remove"]`);
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> Removing...';
+        }
+        
+        // Send the event to the background script to remove from Calendar
+        chrome.runtime.sendMessage(
+            {action: "removeFromCalendar", event: event},
+            function(response) {
+                if (response && response.success) {
+                    // Update the event in the UI
+                    const eventElement = calendarEvents.querySelector(`div[data-event-id="${eventId}"]`);
+                    if (eventElement) {
+                        eventElement.classList.remove('added');
+                        
+                        // Remove the "added" badge and add back the "Add to Calendar" button
+                        const addToCalendarButton = `
+                        <button class="add-to-calendar" data-event-id="${event.id}">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6"></path>
+                                <path d="M3 10h18"></path>
+                                <path d="M16 2v4"></path>
+                                <path d="M8 2v4"></path>
+                                <path d="M12 14v4"></path>
+                                <path d="M10 16h4"></path>
+                            </svg>
+                            Add to Calendar
+                        </button>
+                        `;
+                        
+                        // Replace the "Added to Calendar" badge with the "Add to Calendar" button
+                        eventElement.innerHTML = eventElement.innerHTML.replace(
+                            /<div class="event-added-badge">Added to Calendar<\/div>[\s\S]*?<button class="remove-from-calendar".*?<\/button>/,
+                            addToCalendarButton
+                        );
+                        
+                        // Add event listener to the new "Add to Calendar" button
+                        const newButton = eventElement.querySelector('.add-to-calendar');
+                        if (newButton) {
+                            newButton.addEventListener('click', function(e) {
+                                addEventToCalendar(event.id, allEvents);
+                            });
+                        }
+                    }
+                    
+                    // Update the event in the storage
+                    chrome.storage.local.get(['events'], function(result) {
+                        if (result.events && result.events.length > 0) {
+                            const updatedEvents = result.events.map(e => {
+                                if (e.id === eventId) {
+                                    return { ...e, added: false };
+                                }
+                                return e;
+                            });
+                            chrome.storage.local.set({ events: updatedEvents });
+                        }
+                    });
+                    
+                    // Show a success message
+                    addMessageToChat("Event has been removed from your Google Calendar.", 'bot');
+                } else {
+                    // Show an error message
+                    addMessageToChat("Failed to remove the event from your Google Calendar. Please try again.", 'bot');
+                    
+                    // Re-enable the button
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> Remove from Calendar';
+                    }
+                }
+            }
+        );
+    }
+
     // Set up event listeners for email filtering
     emailFilter.addEventListener('change', fetchEmails);
     readFilter.addEventListener('change', fetchEmails);
@@ -684,21 +1626,139 @@ document.addEventListener('DOMContentLoaded', function() {
             // If no emails are available, fetch them first
             fetchEmails();
         }
+
+        const refreshSummaryButton = document.getElementById('refresh-summary');
+        if (refreshSummaryButton) {
+            const originalContent = refreshSummaryButton.innerHTML;
+            refreshSummaryButton.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinning">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+           `;
+            
+            // Disable the button while refreshing
+            refreshSummaryButton.style.pointerEvents = 'none';
+            refreshSummaryButton.style.opacity = '0.7';
+            
+            // Restore button after 5 seconds if no response
+            window.refreshSummaryButtonTimeout = setTimeout(() => {
+                refreshSummaryButton.innerHTML = originalContent;
+                refreshSummaryButton.style.pointerEvents = '';
+                refreshSummaryButton.style.opacity = '';
+            }, 5000);
+        }
+    }
+
+    // Add listener to clear storage when popup closes
+    window.addEventListener('unload', function() {
+        console.log('📊 Keeping IndexedDB data intact on popup close');
+        // Only clear chat-related items, preserving other data
+        chrome.storage.local.remove(['chatHistory', 'conversationHistory']);
+    });
+
+    // Add a function to fetch contacts
+    function fetchContacts() {
+        // Update status text to indicate we're fetching contacts
+        const statusEl = document.getElementById('status-text');
+        if (statusEl) {
+            statusEl.innerHTML += `<br>👥 Fetching contacts...`;
+        }
+        
+        chrome.runtime.sendMessage({ action: "fetchContacts" }, function(response) {
+            if (response && response.status === "success") {
+                console.log(`✅ Fetched ${response.count} contacts`);
+                
+                // Update the UI to indicate contacts are loaded
+                const statusEl = document.getElementById('status-text');
+                if (statusEl) {
+                    // Replace the previous status with success message
+                    statusEl.innerHTML = statusEl.innerHTML.replace("👥 Fetching contacts...", `✅ ${response.count} contacts loaded`);
+                }
+            } else {
+                console.error("Error fetching contacts:", response);
+                
+                // Update the UI to indicate an error
+                const statusEl = document.getElementById('status-text');
+                if (statusEl) {
+                    // Replace the previous status with error message
+                    statusEl.innerHTML = statusEl.innerHTML.replace("👥 Fetching contacts...", `❌ Failed to load contacts`);
+                }
+            }
+        });
     }
 });
 
+// Update the addMessageToChat function to use the DB storage while preserving formatting
 function addMessageToChat(text, sender) {
     const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
+    
+    // Process text - handle formatting and preserve newlines
+    if (sender === 'bot') {
+        // Convert markdown-style bold (**text**) to HTML bold tags
+        text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        
+        // Handle newlines and lists
+        const lines = text.split('\n');
+        messageDiv.innerHTML = ''; // Use innerHTML instead of textContent
+        
+        let inList = false;
+        
+        lines.forEach((line, index) => {
+            // Handle lines starting with * as list items
+            if (line.trim().startsWith('* ')) {
+                // If this is the first list item, start a new list
+                if (!inList) {
+                    messageDiv.innerHTML += '<ul style="margin: 0; padding-left: 20px;">';
+                    inList = true;
+                }
+                
+                // Add the list item (removing the * prefix)
+                const itemContent = line.trim().substring(2);
+                messageDiv.innerHTML += `<li>${itemContent}</li>`;
+            } else {
+                // Close the list if we were in one
+                if (inList) {
+                    messageDiv.innerHTML += '</ul>';
+                    inList = false;
+                }
+                
+                // Add the regular line
+                messageDiv.innerHTML += line;
+                
+                // Add line break if not the last line
+                if (index < lines.length - 1) {
+                    messageDiv.innerHTML += '<br>';
+                }
+            }
+        });
+        
+        // Close the list if it's still open at the end
+        if (inList) {
+            messageDiv.innerHTML += '</ul>';
+        }
+    } else {
+        // For user messages, just use textContent
     messageDiv.textContent = text;
+    }
+    
     chatbox.appendChild(messageDiv);
+  
+  // Store message in IndexedDB (store the plain text version)
+  storeChatMessageInDB(text, sender).catch(err => 
+    console.error("Failed to store chat message in DB:", err)
+  );
     
     // Scroll to bottom with smooth animation
     chatbox.scrollTo({
         top: chatbox.scrollHeight,
         behavior: 'smooth'
     });
+  
+  return messageDiv;
 }
 
 function updateEmailCounts(emails) {
@@ -732,42 +1792,41 @@ function displaySummary(summaryText) {
 
 document.addEventListener("DOMContentLoaded", () => {
    
-
     const chatbox = document.getElementById("chatbox");
     const messageInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("sendBtn");
   
-    // Load chat history from storage
-    chrome.storage.local.get("chatHistory", (data) => {
-      if (data.chatHistory) {
-        chatbox.innerHTML = data.chatHistory;
+    // Load chat history from IndexedDB instead of local storage
+    getChatHistoryFromDB().then(messages => {
+      if (messages && messages.length > 0) {
+        chatbox.innerHTML = ''; // Clear existing content
+        
+        // Add each message to the chat using the same function for consistency
+        messages.forEach(msg => {
+          addMessageToChat(msg.message, msg.sender);
+        });
       }
+    }).catch(error => {
+      console.error("Error loading chat history:", error);
     });
   
-    // Function to send message
+    // Function to send message - update to store in DB
     function sendMessage() {
       const message = messageInput.value.trim();
       if (message === "") return;
   
-      // Create user message element
-      const userMessage = `<div class="message user">${message}</div>`;
-      chatbox.innerHTML += userMessage;
+      // Add user message to UI and store in DB
+      addMessageToChat(message, 'user');
   
       // Auto-reply (Fake AI response for now)
       setTimeout(() => {
-        const botMessage = `<div class="message bot">I received: "${message}"</div>`;
-        chatbox.innerHTML += botMessage;
-        chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to bottom
-  
-        // Save messages to Chrome storage
-        chrome.storage.local.set({ chatHistory: chatbox.innerHTML });
+        const botResponse = `I received: "${message}"`;
+        
+        // Add bot message to UI and store in DB
+        addMessageToChat(botResponse, 'bot');
       }, 1000);
   
       messageInput.value = "";
-      chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to bottom
-  
-      // Save messages to Chrome storage
-      chrome.storage.local.set({ chatHistory: chatbox.innerHTML });
     }
   
     // Event listeners
@@ -777,6 +1836,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (messageInput) {
         messageInput.addEventListener("keypress", (event) => {
             if (event.key === "Enter") sendMessage();
+        });
+    }
+    
+    // Add a clear chat history function if needed
+    const clearChatBtn = document.getElementById("clear-chat-btn");
+    if (clearChatBtn) {
+        clearChatBtn.addEventListener("click", () => {
+            clearChatHistoryInDB().then(() => {
+                chatbox.innerHTML = ''; // Clear the UI
+                console.log("Chat history cleared");
+            }).catch(error => {
+                console.error("Error clearing chat history:", error);
+            });
         });
     }
 });
@@ -796,8 +1868,34 @@ setInterval(() => {
 
       // Clean up old summaries when fetching new emails
       cleanupOldSummaries().then(() => {
-        const filterValue = document.getElementById("email-filter").value;
-        chrome.runtime.sendMessage({ action: "getEmails", filter: filterValue }, async (response) => {
+        // Get the email filter limit
+        const emailFilterElement = document.getElementById("email-filter");
+        const limitValue = emailFilterElement ? emailFilterElement.value : '20'; // Default to 20 emails if element doesn't exist
+        
+        // Get the current email settings from storage to use the same filters as the main email fetch
+        chrome.storage.local.get(['emailSettings'], function(result) {
+          const settings = result.emailSettings || {
+            timePeriod: 'week',
+            status: 'all',
+            inboxOnly: true,
+            excludeOther: false,
+            excludePromotions: false,
+            excludeSocial: false
+          };
+          
+          // Send request with all settings
+          chrome.runtime.sendMessage({ 
+            action: "getEmails", 
+            filter: limitValue,
+            timeFilter: settings.timePeriod,
+            readFilter: settings.status,
+            additionalFilters: {
+              inboxOnly: settings.inboxOnly,
+              excludeOther: settings.excludeOther,
+              excludePromotions: settings.excludePromotions,
+              excludeSocial: settings.excludeSocial
+            }
+          }, async (response) => {
 
           if (!response || !response.emails) {
             fetchedEmailsContainer.innerHTML = "<p>Could not fetch emails.</p>";
@@ -807,13 +1905,32 @@ setInterval(() => {
           }
 
           let emails = response.emails;
-          if (!isNaN(filterValue)) {
-            emails = emails.slice(0, parseInt(filterValue));
+            if (!isNaN(limitValue)) {
+              emails = emails.slice(0, parseInt(limitValue));
           }
           hideEmailsBtn.style.display = "inline-block";
           openEmailsPageBtn.style.display = "none";
 
           fetchedEmailsContainer.innerHTML = "";
+
+            // Show which filters were applied
+            const filterInfo = document.createElement("div");
+            filterInfo.className = "filter-info";
+            filterInfo.innerHTML = `
+              <div style="background: #f5f5f5; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem; color: #666;">
+                <strong>Applied filters:</strong> 
+                ${settings.timePeriod === 'week' ? 'Past week' : 
+                  settings.timePeriod === 'month' ? 'Past month' : 
+                  settings.timePeriod === 'year' ? 'Past year' : 'All time'} | 
+                ${settings.status === 'all' ? 'All emails' : 
+                  settings.status === 'unread' ? 'Unread only' : 'Read only'} |
+                ${settings.inboxOnly ? 'Inbox only' : 'All folders'} |
+                Limit: ${limitValue} emails
+              </div>
+            `;
+            if (emails.length > 0) {
+              fetchedEmailsContainer.appendChild(filterInfo);
+            }
 
           for (let i = 0; i < emails.length; i++) {
             const email = emails[i];
@@ -861,7 +1978,7 @@ setInterval(() => {
                 console.log(`Successfully extracted full content for email ${i+1} (length: ${emailContent.length})`);
               }
               
-              const prompt = ` Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${emailContent}`;
+                const prompt = `Summarize this email :\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${emailContent}`;
       
               summary = await summarizeWithGemini(prompt);
               
@@ -895,13 +2012,55 @@ setInterval(() => {
 <div style="margin-bottom: 8px;">
   <strong>Summary:</strong> ${summary || "No summary generated."}
 </div>
+<div class="email-marker-container" data-email-id="${emailId}">
+  <img src="logo.png" alt="EMA" class="email-marker" title="Click for quick summary">
+</div>
 `;
 
             fetchedEmailsContainer.appendChild(card);
+            
+            // Add event listener to the marker
+            const marker = card.querySelector('.email-marker');
+            marker.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showSummaryBubble(emailId, summary, e.target);
+            });
           }
+
+            // Show message if no emails found
+            if (emails.length === 0) {
+              fetchedEmailsContainer.innerHTML = `
+                <p class="events-placeholder">No emails found with the current filters.</p>
+                <p style="text-align: center; margin-top: 10px; font-size: 0.9rem;">
+                  <a href="#" id="open-settings-link" style="color: #7d93ef; text-decoration: none;">
+                    Adjust filter settings
+                  </a>
+                </p>
+              `;
+              
+              // Add event listener to open settings
+              document.getElementById('open-settings-link').addEventListener('click', (e) => {
+                e.preventDefault();
+                const settingsModal = document.getElementById('settings-modal');
+                if (settingsModal) {
+                  settingsModal.style.display = 'flex';
+                }
+            });
+          }
+
+          // Add event handler for clicking outside bubbles to close them
+          document.addEventListener('click', (e) => {
+            if (!e.target.closest('.email-marker') && !e.target.closest('.summary-bubble')) {
+              // Close all summary bubbles
+              document.querySelectorAll('.summary-bubble').forEach(bubble => {
+                bubble.remove();
+              });
+            }
+          });
 
           openEmailsPageBtn.textContent = "View All Fetched Emails";
           openEmailsPageBtn.disabled = false;
+          });
         });
       });
     });
@@ -915,4 +2074,41 @@ setInterval(() => {
     hideEmailsBtn.style.display = "none";
     openEmailsPageBtn.style.display = "inline-block";
   });
+  
+  // Function to display a summary bubble for a specific email
+  function showSummaryBubble(emailId, summary, markerElement) {
+    // Remove any existing bubbles
+    document.querySelectorAll('.summary-bubble').forEach(bubble => {
+      bubble.remove();
+    });
+    
+    // Create new bubble
+    const bubble = document.createElement('div');
+    bubble.className = 'summary-bubble';
+    bubble.innerHTML = `
+      <div class="summary-bubble-content">
+        <div class="summary-bubble-header">
+          <span>Email Summary</span>
+          <button class="summary-bubble-close">×</button>
+        </div>
+        <div class="summary-bubble-body">
+          ${summary || "No summary available."}
+        </div>
+      </div>
+    `;
+    
+    // Position bubble near the marker
+    const markerRect = markerElement.getBoundingClientRect();
+    bubble.style.position = 'absolute';
+    bubble.style.left = `${markerRect.right + 10}px`;
+    bubble.style.top = `${markerRect.top - 10}px`;
+    
+    // Add to DOM
+    document.body.appendChild(bubble);
+    
+    // Handle close button
+    bubble.querySelector('.summary-bubble-close').addEventListener('click', () => {
+      bubble.remove();
+    });
+  }
   
