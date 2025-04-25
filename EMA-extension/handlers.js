@@ -2,14 +2,28 @@
 import { authenticateUser, forceReauthenticate } from './auth.js';
 import { fetchEmails, fetchEmailContent } from './gmailApi.js';
 import { summarizeEmails, extractCalendarEvents, processEmailQuery } from './geminiApi.js';
-import { fetchCalendarEvents, addEventToCalendar, syncCalendarEvents, verifyEventInCalendar } from './calendar.js';
-import { initSummaryDB, storeEmails, getSummaryFromCache, storeSummaryInCache, getEventsFromCache, storeEventsInCache, cleanupOldCacheEntries, getCachedItem, storeCachedItem } from './storage.js';
+import { fetchCalendarEvents, addEventToCalendar, syncCalendarEvents, verifyEventInCalendar, removeEventFromCalendar } from './calendar.js';
+import { initSummaryDB, storeEmails, getSummaryFromDB, storeSummaryInDB, getEventsFromDB, storeEventsInCache, cleanupOldCacheEntries, getCachedItem, storeCachedItem, storeContactsInDB, getContactsFromDB } from './storage.js';
 import {standardizeDate, convertTimeToISO, getEndTime, generateEmailContentHash, createBasicEventsFromEmails}  from './utils.js';
 import { processAgentRequest, fetchAndStoreEmails, sendEmail as agentSendEmail } from './agent.js';
+
 import { interpretUserMessage } from './geminiApi.js';
+
+import { fetchAndStoreContacts, fetchContacts } from './contactsApi.js';
+
+// Object to track active requests
+const activeRequests = {};
+
 
 export function registerHandlers() {
     console.log("📅 Handlers: Registering message handlers");
+    
+    // Initialize the summary database
+    initSummaryDB().then(() => {
+        console.log("✅ Summary database initialized");
+    }).catch(err => {
+        console.error("❌ Error initializing summary database:", err);
+    });
     
     // Trigger authentication and processing on extension installation or startup
     chrome.runtime.onInstalled.addListener(() => {
@@ -25,6 +39,23 @@ export function registerHandlers() {
     chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
         console.log("📅 Handlers: Received message: ", request.action);
         
+        // Cancel request handler
+        if (request.action === "cancelRequest") {
+            const requestId = request.requestId;
+            if (requestId && activeRequests[requestId]) {
+                console.log(`Cancelling request with ID: ${requestId}`);
+                // Mark the request as cancelled
+                activeRequests[requestId].cancelled = true;
+                // Clean up the entry
+                delete activeRequests[requestId];
+                sendResponse({success: true});
+            } else {
+                console.log(`Request ID not found or already cancelled: ${requestId}`);
+                sendResponse({success: false, error: "Request not found"});
+            }
+            return true;
+        }
+        
         // Pass through status updates to the popup
         if (request.action === "updateSummaryStatus") {
             // Forward the message to all open extension pages
@@ -35,15 +66,51 @@ export function registerHandlers() {
         if (request.action === "getEmails") {
             const timeFilter = request.timeFilter || 'week';
             const readFilter = request.readFilter || 'all';
+            const additionalFilters = request.additionalFilters || {
+                inboxOnly: true,
+                excludeOther: false,
+                excludePromotions: false,
+                excludeSocial: false
+            };
+            
+            // Register the request if it has an ID
+            if (request.requestId) {
+                activeRequests[request.requestId] = { 
+                    action: "getEmails",
+                    timestamp: Date.now(),
+                    cancelled: false
+                };
+            }
             
             // Authenticate and fetch emails with the filters
             authenticateUser(async function(token) {
                 try {
-                    const messages = await fetchEmails(token, timeFilter, readFilter);
+                    // Check if request was cancelled
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
+                    
+                    const messages = await fetchEmails(token, timeFilter, readFilter, additionalFilters);
+                    
+                    // Check if request was cancelled
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
                     
                     // Fetch full content for each message ID
                     let emailPromises = messages.map(msg => fetchEmailContent(token, msg.id));
                     const fullEmails = await Promise.all(emailPromises);
+                    
+                    // Check if request was cancelled
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
                     
                     // Filter out any failed fetches
                     const validEmails = fullEmails.filter(email => email !== null);
@@ -59,6 +126,18 @@ export function registerHandlers() {
                     // Extract calendar events
                     const events = await extractCalendarEvents(validEmails);
                     
+                    // Check if request was cancelled before sending response
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
+                    
+                    // Clean up the tracking entry
+                    if (request.requestId) {
+                        delete activeRequests[request.requestId];
+                    }
+                    
                     // Send the emails and events back to the popup
                     sendResponse({
                         emails: validEmails || [],
@@ -66,6 +145,12 @@ export function registerHandlers() {
                     });
                 } catch (error) {
                     console.error("❌ Error processing emails:", error);
+                    
+                    // Clean up the tracking entry
+                    if (request.requestId) {
+                        delete activeRequests[request.requestId];
+                    }
+                    
                     sendResponse({
                         error: "Failed to fetch emails. Please try again.",
                         emails: [],
@@ -88,12 +173,33 @@ export function registerHandlers() {
             // Check if we should force regeneration
             const forceRegenerate = request.forceRegenerate || false;
             
+            // Register the request if it has an ID
+            if (request.requestId) {
+                activeRequests[request.requestId] = { 
+                    action: "summarizeEmails",
+                    timestamp: Date.now(),
+                    cancelled: false
+                };
+            }
+            
             // Generate summary using Gemini API (with caching logic)
             summarizeEmails(emails, { 
                 timeFilter: timeFilter,
                 readFilter: readFilter,
                 forceRegenerate: forceRegenerate 
             }).then(summary => {
+                // Check if request was cancelled before sending response
+                if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                    console.log(`Request ${request.requestId} was cancelled, aborting`);
+                    delete activeRequests[request.requestId];
+                    return;
+                }
+                
+                // Clean up the tracking entry
+                if (request.requestId) {
+                    delete activeRequests[request.requestId];
+                }
+                
                 sendResponse({summary: summary});
             });
             
@@ -105,13 +211,41 @@ export function registerHandlers() {
             const forceRefresh = request.forceRefresh || false;
             console.log("📅 Handler received extractEvents request, forceRefresh:", forceRefresh);
             
+            // Register the request if it has an ID
+            if (request.requestId) {
+                activeRequests[request.requestId] = { 
+                    action: "extractEvents",
+                    timestamp: Date.now(),
+                    cancelled: false
+                };
+            }
+            
             if (request.emails && request.emails.length > 0) {
                 console.log(`📅 Using ${request.emails.length} emails provided in request`);
                 extractCalendarEvents(request.emails, { forceRefresh }).then(events => {
+                    // Check if request was cancelled before sending response
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
+                    
                     console.log(`📅 Extracted ${events.length} events, sending response`);
+                    
+                    // Clean up the tracking entry
+                    if (request.requestId) {
+                        delete activeRequests[request.requestId];
+                    }
+                    
                     sendResponse({events: events});
                 }).catch(error => {
                     console.error("Error extracting events:", error);
+                    
+                    // Clean up the tracking entry
+                    if (request.requestId) {
+                        delete activeRequests[request.requestId];
+                    }
+                    
                     sendResponse({events: [], error: "Failed to extract events"});
                 });
             } else {
@@ -122,15 +256,40 @@ export function registerHandlers() {
                     
                     if (emails.length === 0) {
                         console.log("📅 No emails found in storage, returning empty array");
+                        
+                        // Clean up the tracking entry
+                        if (request.requestId) {
+                            delete activeRequests[request.requestId];
+                        }
+                        
                         sendResponse({events: []});
                         return;
                     }
                     
                     extractCalendarEvents(emails, { forceRefresh }).then(events => {
+                        // Check if request was cancelled before sending response
+                        if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                            console.log(`Request ${request.requestId} was cancelled, aborting`);
+                            delete activeRequests[request.requestId];
+                            return;
+                        }
+                        
                         console.log(`📅 Extracted ${events.length} events from storage emails, sending response`);
+                        
+                        // Clean up the tracking entry
+                        if (request.requestId) {
+                            delete activeRequests[request.requestId];
+                        }
+                        
                         sendResponse({events: events});
                     }).catch(error => {
                         console.error("Error extracting events:", error);
+                        
+                        // Clean up the tracking entry
+                        if (request.requestId) {
+                            delete activeRequests[request.requestId];
+                        }
+                        
                         sendResponse({events: [], error: "Failed to extract events"});
                     });
                 });
@@ -139,16 +298,51 @@ export function registerHandlers() {
         }
         
         if (request.action === "syncCalendarEvents") {
+            // Register the request if it has an ID
+            if (request.requestId) {
+                activeRequests[request.requestId] = { 
+                    action: "syncCalendarEvents",
+                    timestamp: Date.now(),
+                    cancelled: false
+                };
+            }
+            
             // Authenticate and sync calendar events
             authenticateUser(async function(token) {
                 try {
+                    // Check if request was cancelled
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
+                    
                     // Perform calendar sync
                     const result = await syncCalendarEvents(token);
+                    
+                    // Check if request was cancelled
+                    if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                        console.log(`Request ${request.requestId} was cancelled, aborting`);
+                        delete activeRequests[request.requestId];
+                        return;
+                    }
                     
                     // Reload events after sync
                     chrome.storage.local.get(['emails'], async function(result) {
                         const emails = result.emails || [];
-                        const updatedEvents = await getEventsFromCache();
+                        const updatedEvents = await getEventsFromDB();
+                        
+                        // Check if request was cancelled before sending response
+                        if (request.requestId && activeRequests[request.requestId]?.cancelled) {
+                            console.log(`Request ${request.requestId} was cancelled, aborting`);
+                            delete activeRequests[request.requestId];
+                            return;
+                        }
+                        
+                        // Clean up the tracking entry
+                        if (request.requestId) {
+                            delete activeRequests[request.requestId];
+                        }
                         
                         sendResponse({
                             success: true,
@@ -158,6 +352,12 @@ export function registerHandlers() {
                     });
                 } catch (error) {
                     console.error("❌ Error syncing calendar events: ", error);
+                    
+                    // Clean up the tracking entry
+                    if (request.requestId) {
+                        delete activeRequests[request.requestId];
+                    }
+                    
                     sendResponse({
                         success: false,
                         error: "Failed to sync with Google Calendar."
@@ -230,13 +430,108 @@ export function registerHandlers() {
             return true; // Required for async response
         }
         
+        if (request.action === "removeFromCalendar") {
+            // Get the event data from the request
+            const eventData = request.event;
+            
+            if (!eventData) {
+                sendResponse({success: false, error: "No event data provided"});
+                return true;
+            }
+            
+            // Authenticate and remove event from calendar
+            authenticateUser(async function(token) {
+                try {
+                    const result = await removeEventFromCalendar(token, eventData);
+                    sendResponse({
+                        success: true
+                    });
+                } catch (error) {
+                    console.error("❌ Error removing event from calendar:", error);
+                    
+                    // If it's a permission error, try to get a new token with the right scopes
+                    if (error.message && error.message.includes('Calendar permission denied')) {
+                        console.log("🔄 Need to re-authenticate with calendar scopes");
+                        
+                        // Use the force re-authentication function
+                        forceReauthenticate(async (newToken) => {
+                            if (!newToken) {
+                                sendResponse({
+                                    success: false,
+                                    error: "Could not authenticate with calendar. Please reload the extension and try again."
+                                });
+                                return;
+                            }
+                            
+                            // Try again with the new token
+                            try {
+                                const result = await removeEventFromCalendar(newToken, eventData);
+                                sendResponse({
+                                    success: true
+                                });
+                            } catch (retryError) {
+                                sendResponse({
+                                    success: false,
+                                    error: "Calendar access failed even after re-authentication. Please try again later."
+                                });
+                            }
+                        });
+                    } else {
+                        sendResponse({
+                            success: false,
+                            error: error.message || "Unknown error removing event from calendar"
+                        });
+                    }
+                }
+            });
+            
+            return true; // Required for async response
+        }
+        
+        if (request.action === "fetchContacts") {
+            if (activeRequests["fetchContacts"]) {
+                sendResponse({ status: "busy", message: "Already fetching contacts" });
+                return true;
+            }
+            
+            activeRequests["fetchContacts"] = true;
+            
+            authenticateUser(async function(token) {
+                try {
+                    const result = await fetchAndStoreContacts(token);
+                    sendResponse({ 
+                        status: "success", 
+                        contacts: result.contacts, 
+                        count: result.count 
+                    });
+                } catch (error) {
+                    console.error("❌ Error fetching contacts:", error);
+                    sendResponse({ 
+                        status: "error", 
+                        message: error.toString() 
+                    });
+                } finally {
+                    delete activeRequests["fetchContacts"];
+                }
+            });
+            
+            return true;
+        }
+        
         if (request.action === "processMessage") {
             (async () => {
                 try {
                     // Get context data from storage
                     const context = await new Promise(resolve => {
-                        chrome.storage.local.get(['pendingEmail', 'knownContacts', 'emails', 'userContext'], result => {
-                            resolve(result);
+                        chrome.storage.local.get(['pendingEmail', 'emails', 'userContext'], async result => {
+                            // Get contacts from IndexedDB instead of local storage
+                            const knownContacts = await getContactsFromDB();
+                            
+                            // Add contacts to the context
+                            resolve({
+                                ...result,
+                                knownContacts
+                            });
                         });
                     });
                     
@@ -320,7 +615,37 @@ if (interpreted?.intent === "create_event" && interpreted?.eventDetails) {
                         sendResponse({ reply: "🛑 No problem. What else can I help you with?" });
                         return;
                     }
-                  
+                    
+                    // Ensure we have contacts loaded if needed
+                    if (context.knownContacts === undefined || 
+                        context.knownContacts.length === 0 || 
+                        userMessage.includes("contact") || 
+                        userMessage.includes("email") || 
+                        userMessage.includes("send") || 
+                        userMessage.includes("write")) {
+                        
+                        // Check when we last fetched contacts - fetch if older than 1 day or never fetched
+                        const lastContactsFetch = context.lastContactsFetch || 0;
+                        const oneDayInMs = 24 * 60 * 60 * 1000;
+                        const shouldFetchContacts = Date.now() - lastContactsFetch > oneDayInMs;
+                        
+                        if (shouldFetchContacts) {
+                            await new Promise(resolve => {
+                                authenticateUser(async (token) => {
+                                    try {
+                                        const contactResult = await fetchAndStoreContacts(token);
+                                        // Use the contacts from the result directly
+                                        context.knownContacts = contactResult.contacts;
+                                        resolve();
+                                    } catch (error) {
+                                        console.error("Error fetching contacts:", error);
+                                        resolve(); // Continue even if contact fetching fails
+                                    }
+                                });
+                            });
+                        }
+                    }
+
                     // Process through the agent
                     const agentResponse = await processAgentRequest(request.message, context);
                     
@@ -351,12 +676,90 @@ if (interpreted?.intent === "create_event" && interpreted?.eventDetails) {
                     // Handle normal responses
                     sendResponse({ reply: agentResponse.reply });
                 } catch (error) {
-                    console.error("Error in processMessage:", error);
-                    sendResponse({ reply: "Sorry, I encountered an error. Please try again." });
+                    console.error("Error processing message:", error);
+                    sendResponse({ reply: "I encountered an error processing your message. Please try again." });
                 }
             })();
             
-            return true; // Required for async response
+            return true;
+        }
+        
+        if (request.action === "generateSummaryForEmail") {
+            const emailId = request.emailId;
+            
+            if (!emailId) {
+                sendResponse({success: false, error: "No email ID provided"});
+                return true;
+            }
+            
+            console.log(`Generating summary for email ${emailId}`);
+            
+            // Authenticate and fetch the email content
+            authenticateUser(async function(token) {
+                try {
+                    // Fetch the email content from Gmail API
+                    const email = await fetchEmailContent(token, emailId);
+                    
+                    if (!email) {
+                        sendResponse({success: false, error: "Could not fetch email content"});
+                        return;
+                    }
+                    
+                    // Get email details
+                    const subject = email.payload?.headers?.find(h => h.name === "Subject")?.value || "No Subject";
+                    const from = email.from || "Unknown";
+                    
+                    // Extract email content
+                    let emailContent = "";
+                    
+                    // Check if the email has a payload with parts (MIME structure)
+                    if (email.payload && (email.payload.body || email.payload.parts)) {
+                        // Try to get content from main body
+                        if (email.payload.body && email.payload.body.data) {
+                            emailContent = atob(email.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                        } 
+                        // Or check in parts
+                        else if (email.payload.parts) {
+                            // Find text parts
+                            for (const part of email.payload.parts) {
+                                if (part.mimeType === 'text/plain' && part.body && part.body.data) {
+                                    const partContent = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                                    emailContent += partContent + "\n";
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Fall back to snippet if parsing failed
+                    if (!emailContent || emailContent.length < 10) {
+                        emailContent = email.body || email.snippet || "No body";
+                    }
+                    
+                    // Create a prompt for summarization
+                    const prompt = `Summarize this email:\n\nSubject: ${subject}\nFrom: ${from}\nBody: ${emailContent}`;
+                    
+                    // Import summarizeWithGemini function
+                    const { summarizeWithGemini } = await import('./geminiApi.js');
+                    
+                    // Generate summary
+                    const summary = await summarizeWithGemini(prompt);
+                    
+                    if (summary) {
+                        // Save the summary to storage
+                        const { saveEmailSummary } = await import('./storage.js');
+                        await saveEmailSummary(emailId, summary);
+                        
+                        sendResponse({success: true, summary: summary});
+                    } else {
+                        sendResponse({success: false, error: "Failed to generate summary"});
+                    }
+                } catch (error) {
+                    console.error("Error generating summary:", error);
+                    sendResponse({success: false, error: "An error occurred while generating the summary"});
+                }
+            });
+            
+            return true;
         }
     });
      
@@ -366,9 +769,7 @@ if (interpreted?.intent === "create_event" && interpreted?.eventDetails) {
 // Main function to fetch emails, process their content, and summarize them
 async function processEmailsAndSummarize(token) {
     try {
-      // Run cache cleanup occasionally
-      await cleanupOldCacheEntries();
-      
+     
       // Use default values - past week, all emails
       const messages = await fetchEmails(token);
       
@@ -402,19 +803,13 @@ async function processEmailsAndSummarize(token) {
       });
       
       const knownContacts = Array.from(contactsMap.entries()); // <-- array of [name, email]
-      chrome.storage.local.set({ knownContacts });
-      
+      // Store contacts in IndexedDB using the new function
+      await storeContactsInDB(knownContacts);
+
       console.log("👥 Contacts found in inbox:", knownContacts);
   
-  
-      
       // Store emails in IndexedDB
       await storeEmails(validEmails);
-      
-      // Also store in Chrome Storage for backward compatibility
-      chrome.storage.local.set({ emails: validEmails }, () => {
-        console.log("Emails stored in Chrome Storage.");
-      });
       
       // Generate summary
       const summary = await summarizeEmails(validEmails);
@@ -442,26 +837,5 @@ async function processEmailsAndSummarize(token) {
     }
 }
   
-async function sendEmail(token, to, subject, message) {
-    const email = 
-        `To: ${to}\r\n` +
-        `Subject: ${subject}\r\n` +
-        `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
-        `${message}`;
 
-    const encodedMessage = btoa(unescape(encodeURIComponent(email)))
-        .replace(/\+/g, '-').replace(/\//g, '_');
-
-    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ raw: encodedMessage })
-    });
-
-    const data = await res.json();
-    return data;
-}
 
