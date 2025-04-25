@@ -1,72 +1,86 @@
-/* General Styling */
 body {
-    width: 350px;
-    background: #1e1e2f;
-    color: white;
-    font-family: 'Arial', sans-serif;
-    padding: 15px;
+    font-family: 'Poppins', sans-serif;
+    background: #f9fbfc;
+    color: #222;
+    padding: 16px;
     text-align: center;
-}
-
-/* Container */
-.container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-
-/* Header */
-h2 {
-    font-size: 20px;
-    color: #f9a826;
+    width: 370px;
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  }
+  
+  h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #4ab3f4;
+    margin-top: 8px;
+  }
+  
+  #logo {
+    width: 48px;
+    margin-bottom: 6px;
+  }
+  
+  .section {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 16px;
+    margin: 12px 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  }
+  
+  .section-title {
+    font-weight: 600;
+    color: #4ab3f4;
+    font-size: 15px;
     margin-bottom: 10px;
-}
-
-/* Chatbox */
-#chatbox {
-    width: 90%;
-    height: 250px;
-    overflow-y: auto;
-    background: #2a2a3a;
-    border-radius: 10px;
-    padding: 10px;
-    margin-bottom: 15px;
-    border: 1px solid #444;
-}
-
-/* Messages */
-.message {
-    padding: 10px;
+  }
+  
+  select, button {
+    font-size: 14px;
+    padding: 8px 14px;
     border-radius: 8px;
-    margin: 5px 0;
-    max-width: 80%;
-}
-
-/* Bot Messages */
-.bot {
-    background: #3b3b4f;
-    text-align: left;
-}
-
-/* User Messages */
-.user {
-    background: #f9a826;
-    text-align: right;
-    margin-left: auto;
-}
-
-/* Button */
-button {
-    background: #f9a826;
+    border: 1px solid #e0e0e0;
+    background: white;
+    color: #333;
+    outline: none;
+    transition: all 0.2s ease;
+  }
+  
+  button {
+    background: linear-gradient(135deg, #4ab3f4, #bca7ff);
     color: white;
     border: none;
-    padding: 10px 15px;
-    border-radius: 5px;
-    font-size: 16px;
+    font-weight: 500;
     cursor: pointer;
-    transition: 0.3s;
-}
-
-button:hover {
-    background: #e6951d;
-}
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+  
+  button:hover {
+    opacity: 0.95;
+    transform: translateY(-1px);
+  }
+  
+  .email-box {
+    padding: 10px;
+    border: 1px solid #eaeaea;
+    border-radius: 12px;
+    background-color: #fafcfd;
+    font-size: 13px;
+    text-align: left;
+    color: #444;
+  }
+  
+  .status-text {
+    font-size: 13px;
+    color: #999;
+    margin-top: 10px;
+  }
+  
+  .refresh-icon {
+    height: 16px;
+    vertical-align: middle;
+    margin-left: 6px;
+    opacity: 0.6;
+  }
+  

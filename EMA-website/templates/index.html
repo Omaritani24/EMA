@@ -4,17 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EMA - Enhanced Mail Assistant</title>
-    <link rel="stylesheet" href="styles.css">
-    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32x32.png') }}">
+<link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='images/favicon-16x16.png') }}">
+
     <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <header>
         <nav>
             <div class="logo">
-                <img src="images/logo.png" alt="EMA Logo" id="logo">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="EMA Logo">
                 <span>EMA</span>
             </div>
             <ul class="nav-links">
@@ -24,7 +26,9 @@
                 <li><a href="#pricing">Pricing</a></li>
             </ul>
             <div class="cta-buttons">
-                <a href="#" class="button secondary-button">Sign In</a>
+                <a href="http://localhost:5000/login" class="button secondary-button">Sign In</a>
+
+
                 <a href="#" class="button primary-button">Get EMA</a>
             </div>
             <div class="hamburger">
@@ -42,59 +46,60 @@
                 <h1>A smarter way to manage your email</h1>
                 <p>EMA uses artificial intelligence to summarize emails, extract calendar events, and help you respond faster—all right within your inbox.</p>
                 <div class="hero-cta">
-                    <a href="#" class="button primary-button">Add to Chrome</a>
-                    <a href="#" class="button text-button">Learn more <i class="fas fa-chevron-right"></i></a>
+                    <a href="{{ url_for('login') }}" class="button primary-button">Add to Chrome</a>
+
                 </div>
             </div>
             <div class="hero-image">
-                <img src="images/hero-image.png" alt="EMA in action">
+                <img src="{{ url_for('static', filename='images/hero-image.png') }}" alt="EMA in action">
+
             </div>
         </section>
 
-        <section class="intro">
-            <div class="intro-text">
-                <h2>Take control of your inbox</h2>
-                <p>EMA is an AI-powered assistant that transforms how you interact with your emails, saving you time and helping you stay organized.</p>
-            </div>
-        </section>
+
 
         <section id="features" class="features">
+            <div class="features-header-wrapper"></div>
             <div class="features-header">
                 <span class="subheading">Features</span>
                 <h2>Everything you need to master your inbox</h2>
             </div>
+
             <div class="features-grid">
                 <div class="feature-card">
                     <div class="feature-icon">
-                        <img src="images/summary-icon.svg" alt="Summary icon">
+                        <img src="{{ url_for('static', filename='images/summary-icon.svg') }}" alt="Summary icon">
                     </div>
                     <h3>Smart Summaries</h3>
                     <p>Get concise, AI-generated summaries of your emails at a glance, so you can quickly understand what matters.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
-                        <img src="images/calendar-icon.svg" alt="Calendar icon">
+                        <img src="{{ url_for('static', filename='images/calendar-icon.svg') }}" alt="Calendar icon">
                     </div>
                     <h3>Calendar Integration</h3>
                     <p>EMA automatically detects dates, times, and events in your emails and lets you add them to your calendar with a single click.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">
-                        <img src="images/chat-icon.svg" alt="Chat icon">
+                    <div class="feature-icon">     
+                           <img src="{{ url_for('static', filename='images/chat-icon.svg') }}" alt="Chat icon">
                     </div>
                     <h3>AI Chat Assistant</h3>
                     <p>Ask questions about your emails and get instant answers. No more searching through endless threads to find what you need.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
-                        <img src="images/reply-icon.svg" alt="Reply icon">
+                        <img src="{{ url_for('static', filename='images/reply-icon.svg') }}" alt="Reply icon">
                     </div>
                     <h3>Smart Replies</h3>
                     <p>Let EMA draft context-aware responses or compose new emails for you based on your communication style.</p>
                 </div>
             </div>
         </section>
-
+ 
+    <div class="section-divider"></div>
+    
+    
         <section class="showcase">
             <div class="showcase-header">
                 <span class="subheading">A closer look</span>
@@ -102,13 +107,17 @@
                 <p>EMA integrates seamlessly with your email workflow, offering powerful features without compromising the user experience.</p>
             </div>
             <div class="demo-video">
-                <img src="images/demo-placeholder.jpg" alt="EMA demo" class="video-placeholder">
+                <img src="{{ url_for('static', filename='images/demo-placeholder.jpg') }}" alt="EMA demo" class="video-placeholder">
+
                 <div class="play-button">
                     <i class="fas fa-play"></i>
                 </div>
             </div>
         </section>
-
+  
+    <div class="section-divider"></div>
+   
+    
         <section id="how-it-works" class="how-it-works">
             <div class="section-header">
                 <span class="subheading">Simple Setup</span>
@@ -134,50 +143,10 @@
             </div>
         </section>
 
-        <section class="testimonials">
-            <div class="section-header light">
-                <span class="subheading">Testimonials</span>
-                <h2>What people are saying</h2>
-            </div>
-            <div class="testimonial-slider">
-                <div class="testimonial">
-                    <p>"EMA has transformed how I handle emails. The AI summaries alone save me hours each week, and the calendar integration is seamless."</p>
-                    <div class="testimonial-author">
-                        <img src="images/user1.jpg" alt="User 1">
-                        <div>
-                            <h4>Sarah Johnson</h4>
-                            <p>Marketing Director</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="testimonial">
-                    <p>"I love being able to ask EMA questions about my emails. It's like having a personal assistant who knows my inbox better than I do."</p>
-                    <div class="testimonial-author">
-                        <img src="images/user2.jpg" alt="User 2">
-                        <div>
-                            <h4>Michael Chen</h4>
-                            <p>Software Engineer</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="testimonial">
-                    <p>"The smart reply feature is a game-changer. EMA drafts responses that sound exactly like me, saving me time while maintaining my voice."</p>
-                    <div class="testimonial-author">
-                        <img src="images/user3.jpg" alt="User 3">
-                        <div>
-                            <h4>Emma Rodriguez</h4>
-                            <p>Product Manager</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="testimonial-dots">
-                <span class="dot active"></span>
-                <span class="dot"></span>
-                <span class="dot"></span>
-            </div>
-        </section>
 
+    <div class="section-divider"></div>
+
+      
         <section id="faq" class="faq">
             <div class="section-header">
                 <span class="subheading">FAQ</span>
@@ -211,6 +180,9 @@
             </div>
         </section>
 
+    <div class="section-divider"></div>
+ 
+    
         <section id="pricing" class="pricing">
             <div class="section-header">
                 <span class="subheading">Pricing</span>
@@ -266,21 +238,18 @@
             </div>
         </section>
 
-        <section class="cta">
-            <h2>Ready to transform your email experience?</h2>
-            <p>Join thousands of users who save time and boost productivity with EMA.</p>
-            <div class="cta-buttons">
-                <a href="#" class="button primary-button">Get EMA for Chrome</a>
-                <a href="#" class="button secondary-button">Learn More</a>
-            </div>
-        </section>
+        
     </main>
-
+   
+    <div class="section-divider"></div>
+   
+    
     <footer>
         <div class="footer-grid">
             <div class="footer-column">
                 <div class="footer-logo">
-                    <img src="images/logo.png" alt="EMA Logo">
+                    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="EMA Logo">
+
                     <span>EMA</span>
                 </div>
                 <p>Enhanced Mail Assistant - Your AI-powered email companion for a more productive inbox.</p>
