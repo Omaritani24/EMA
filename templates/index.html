@@ -64,7 +64,7 @@
                 </div>
             </div>
             <div class="hero-image">
-                <img src="{{ url_for('static', filename='images/hero-image.png') }}" alt="EMA in action">
+                <img src="{{ url_for('static', filename='images/hero-image.PNG') }}" alt="EMA in action">
 
             </div>
         </section>
@@ -119,12 +119,11 @@
                 <h2>Designed for simplicity and efficiency</h2>
                 <p>EMA integrates seamlessly with your email workflow, offering powerful features without compromising the user experience.</p>
             </div>
-            <div class="demo-video">
-                <video width="720" controls class="video-placeholder">
-                    <source src="{{ url_for('static', filename='videos/demo.mp4') }}" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
-            </div>
+            <video width="100%" controls autoplay muted playsinline>
+                <source src="static/videos/demo.mp4" type="video/mp4">
+                Your browser does not support the video tag.
+              </video>
+              
             
         </section>
   
