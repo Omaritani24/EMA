@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN python setup_db.py
+
 EXPOSE 5000
 
 CMD ["python", "app.py"]
