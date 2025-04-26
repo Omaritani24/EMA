@@ -10,4 +10,5 @@ venv/
 .env
 *.db
 .dockerignore
-Dockerfile 
+Dockerfile
+EMA-extension/ 
