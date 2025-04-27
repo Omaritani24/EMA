@@ -3,6 +3,7 @@
 </p>
 
 # EMA - Enhanced Mail Assistant Chrome Extension
+https://ema-6gwc.onrender.com/#
 
 A powerful Chrome extension that enhances your Gmail experience with AI-powered features for better email management and productivity.
 
