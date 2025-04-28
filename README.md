@@ -6,6 +6,7 @@
 https://ema-6gwc.onrender.com/#
 
 A powerful Chrome extension that enhances your Gmail experience with AI-powered features for better email management and productivity.
+Note: to view all commit history, view activity of main branch
 
 ## Features
 
@@ -53,7 +54,15 @@ A powerful Chrome extension that enhances your Gmail experience with AI-powered 
 ### Developer Mode Installation
 Since the extension is not yet published on the Chrome Web Store, you can install it in developer mode:
 
-#### Option 1: From Downloaded ZIP
+#### Option 1: From Repository (recommended)
+1. Clone the repository: `git clone https://github.com/Omaritani24/EMA`
+2. Open Chrome and navigate to `chrome://extensions/`
+3. Enable "Developer mode" using the toggle in the top-right corner
+4. Click "Load unpacked" button
+5. Select the EMA-extension folder from the cloned repository
+6. The extension icon should appear in your browser toolbar
+
+#### Option 2: From Downloaded ZIP
 1. Download and extract the EMA-extension.zip file
 2. Open Chrome and navigate to `chrome://extensions/`
 3. Enable "Developer mode" using the toggle in the top-right corner
@@ -61,13 +70,7 @@ Since the extension is not yet published on the Chrome Web Store, you can instal
 5. Select the extracted EMA-extension folder
 6. The extension icon should appear in your browser toolbar
 
-#### Option 2: From Repository
-1. Clone the repository: `git clone https://github.com/Omaritani24/EMA`
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable "Developer mode" using the toggle in the top-right corner
-4. Click "Load unpacked" button
-5. Select the EMA-extension folder from the cloned repository
-6. The extension icon should appear in your browser toolbar
+
 
 ## Usage
 
